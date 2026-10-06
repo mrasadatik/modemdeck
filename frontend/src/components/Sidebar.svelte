@@ -6,7 +6,7 @@
 
 <aside class="sidebar">
   <div class="brand">
-    <img class="brand-mark" src="/logo.png" alt="ModemDeck logo" />
+    <img class="brand-mark" src="/logo-sm.png" alt="ModemDeck logo" />
     <div><strong>ModemDeck</strong><small>PRIVATE DEVICE CONSOLE</small></div>
   </div>
   <div class="nav-label">Workspace</div>
