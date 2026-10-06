@@ -59,6 +59,10 @@ body {
     ),
     var(--bg);
   color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 button,
 input,
@@ -75,6 +79,7 @@ button {
   border-bottom: 2px solid var(--blue);
   color: var(--text);
   display: flex;
+  flex-shrink: 0;
   font-size: 13px;
   gap: 16px;
   justify-content: space-between;
@@ -89,18 +94,18 @@ button {
 }
 .app {
   display: grid;
+  flex: 1;
   grid-template-columns: 240px 1fr;
-  min-height: 100vh;
+  min-height: 0;
 }
 .sidebar {
   background: var(--mantle);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   padding: 25px 15px;
-  position: sticky;
-  top: 0;
 }
 .brand {
   align-items: center;
@@ -187,7 +192,9 @@ button {
   box-shadow: 0 0 12px var(--accent);
 }
 .content {
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
 }
 .topbar {
   align-items: center;
@@ -507,13 +514,22 @@ th {
   }
 }
 @media (max-width: 900px) {
+  body {
+    height: auto;
+    overflow: auto;
+  }
   .app {
     display: block;
+    flex: none;
+    min-height: 0;
   }
   .sidebar {
     height: auto;
+    overflow: visible;
     padding: 14px 16px;
-    position: static;
+  }
+  .content {
+    overflow: visible;
   }
   .brand {
     padding: 0 0 14px;

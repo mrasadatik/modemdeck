@@ -1,5 +1,5 @@
 {
-  "name": "@arculetstudios/modemdeck",
+  "name": "@arculet-studios/modemdeck",
   "version": "1.0.0",
   "description": "Local-first web console for USB AT-command modems: SMS, USSD, call log, phonebook, network & dial-up data — private, self-hosted, localhost-only.",
   "type": "module",
