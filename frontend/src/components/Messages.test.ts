@@ -46,6 +46,28 @@ describe('Messages workflows', () => {
     );
   });
 
+  it('suggests recent numbers while allowing new recipients', async () => {
+    const { container, getByRole } = render(Messages, {
+      props: {
+        state: {
+          ...state,
+          sent: [{ to: '+15551234567', text: 'Hello', ts: '2026-01-01', parts: 1 }],
+          sms: [{ id: 'message-1', from: '+15557654321', text: 'Hi', ts: '2026-01-02' }],
+        },
+        mode: 'send',
+      },
+    });
+    const recipient = getByRole('combobox', { name: 'Destination number' }) as HTMLInputElement;
+    expect(recipient.getAttribute('list')).toBe('recent-numbers');
+    expect(
+      [...container.querySelectorAll<HTMLOptionElement>('#recent-numbers option')].map(
+        (item) => item.value,
+      ),
+    ).toEqual(['+15551234567', '+15557654321']);
+    await fireEvent.input(recipient, { target: { value: '+19998887777' } });
+    expect(recipient.value).toBe('+19998887777');
+  });
+
   it('renders a USSD response and clears the submitted code', async () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ text: 'Balance: 10', more: false })),

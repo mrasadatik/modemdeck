@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { ModemDiscovery } from '../src/application/modem-discovery.js';
 import type { SerialTransportPort } from '../src/domain/ports/serial-transport.js';
 
@@ -28,6 +29,32 @@ class FakeTransport implements SerialTransportPort {
     this.listener = undefined;
   }
 }
+
+test('discovery rejects promptly when a port is unplugged during probing', async () => {
+  class UnpluggedTransport extends EventEmitter {
+    readonly path = 'COM8';
+    isOpen = true;
+    write(): void {
+      setImmediate(() => {
+        this.isOpen = false;
+        this.emit('error', new Error('unplugged'));
+        this.emit('close');
+      });
+    }
+    close(): void {
+      this.isOpen = false;
+    }
+  }
+  const started = Date.now();
+  await assert.rejects(
+    new ModemDiscovery(
+      async () => [{ path: 'COM8' }],
+      async () => new UnpluggedTransport() as unknown as SerialTransportPort,
+    ).find(),
+    /no responding AT modem found/,
+  );
+  assert.ok(Date.now() - started < 1200);
+});
 
 test('discovery probes ports concurrently and selects an AT responder', async () => {
   const found = await new ModemDiscovery(

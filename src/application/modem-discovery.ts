@@ -32,26 +32,33 @@ export class ModemDiscovery {
           const opened = candidate;
           const result = await new Promise<boolean>((resolve) => {
             let buffer = '';
-            const timer = setTimeout(() => {
+            const finish = (responded: boolean): void => {
+              clearTimeout(timer);
               opened.removeListener('data', receive);
-              resolve(false);
-            }, 1200);
+              opened.removeListener('close', fail);
+              opened.removeListener('error', fail);
+              resolve(responded);
+            };
+            const fail = (): void => finish(false);
             const receive = (data: Buffer | string): void => {
               buffer += data.toString();
-              if (/\b(?:OK|ERROR)\b/.test(buffer)) {
-                clearTimeout(timer);
-                opened.removeListener('data', receive);
-                resolve(/\bOK\b/.test(buffer));
-              }
+              if (/\b(?:OK|ERROR)\b/.test(buffer)) finish(/\bOK\b/.test(buffer));
             };
+            const timer = setTimeout(fail, 1200);
             opened.on('data', receive);
-            opened.write('AT\r');
+            opened.on('close', fail);
+            opened.on('error', fail);
+            try {
+              opened.write('AT\r');
+            } catch {
+              finish(false);
+            }
           });
-          if (result && !found) found = candidate;
-          else candidate.close();
+          if (result && !found && candidate.isOpen) found = candidate;
+          else if (candidate.isOpen) candidate.close();
         } catch {
           try {
-            candidate?.close();
+            if (candidate?.isOpen) candidate.close();
           } catch {
             /* cleanup best effort */
           }

@@ -10,6 +10,16 @@
     code = '',
     reply = '',
     result = 'No active session.';
+  $: recentNumbers = [
+    ...new Set([
+      ...state.sent.map((message) => message.to),
+      ...state.sms.map((message) => message.from),
+      ...state.calls.map((call) => call.number),
+    ]),
+  ]
+    .filter((number) => number && number !== 'Unknown')
+    .slice(0, 30);
+  $: recentCodes = [...new Set(state.ussd.map((item) => item.code))].slice(0, 20);
   async function action(path: string, body: Record<string, unknown> = {}): Promise<void> {
     try {
       await api(path, body);
@@ -76,8 +86,12 @@
           class="input"
           aria-label="Destination number"
           bind:value={to}
+          list="recent-numbers"
           placeholder="+880 1XXXXXXXXX"
         />
+        <datalist id="recent-numbers">
+          {#each recentNumbers as number (number)}<option value={number}></option>{/each}
+        </datalist>
         <div class="label">Message <span class="muted">{text.length} characters</span></div>
         <textarea rows="7" bind:value={text} placeholder="Write your message…"></textarea>
         <div class="row end"><button class="button" on:click={send}>Send message</button></div>
@@ -104,8 +118,12 @@
             class="input"
             aria-label="USSD code"
             bind:value={code}
+            list="recent-ussd-codes"
             placeholder="*121#"
-          /><button class="button" on:click={ussd}>Send code</button>
+          /><datalist id="recent-ussd-codes">
+            {#each recentCodes as recentCode (recentCode)}<option value={recentCode}
+              ></option>{/each}
+          </datalist><button class="button" on:click={ussd}>Send code</button>
         </div>
         <div class="notice">{result}</div>
         <div class="row">

@@ -11,12 +11,16 @@ const state = {
 };
 
 describe('App integration shell', () => {
+  let statusEvent: ((event: MessageEvent) => void) | undefined;
   beforeEach(() => {
+    statusEvent = undefined;
     vi.restoreAllMocks();
     vi.stubGlobal(
       'EventSource',
       class {
-        addEventListener(): void {}
+        addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+          if (type === 'status') statusEvent = listener;
+        }
         close(): void {}
       },
     );
@@ -51,6 +55,33 @@ describe('App integration shell', () => {
         return new Response(JSON.stringify({}), { status: 200 });
       }),
     );
+  });
+
+  it('updates the visible modem status after disconnect and replug events', async () => {
+    const { container } = render(App);
+    const sidebarStatus = () =>
+      container.querySelector('.side-bottom span:last-child')?.textContent;
+    await waitFor(() => expect(sidebarStatus()).toBe('COM4'));
+
+    statusEvent?.({
+      data: JSON.stringify({
+        connected: false,
+        port: '',
+        error: 'Modem disconnected',
+        capabilities: {},
+      }),
+    } as MessageEvent);
+    await waitFor(() => expect(sidebarStatus()).toBe('Modem disconnected'));
+
+    statusEvent?.({
+      data: JSON.stringify({
+        connected: true,
+        port: 'COM9',
+        error: '',
+        capabilities: { sms: true },
+      }),
+    } as MessageEvent);
+    await waitFor(() => expect(sidebarStatus()).toBe('COM9'));
   });
 
   it('loads the dashboard and navigates through the real feature shell', async () => {

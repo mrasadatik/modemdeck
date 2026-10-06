@@ -40,6 +40,8 @@ export class ModemLifecycle {
     private profile?: ModemProfile,
     private readonly interaction?: InteractionRecorder,
     private readonly windowsModems?: () => Promise<WindowsModem[]>,
+    private readonly onStatusChange?: () => void,
+    private readonly findTransport?: () => Promise<SerialTransportPort>,
   ) {}
   async command(command: string, timeout = 8000, data?: string): Promise<string[]> {
     if (!this.engine) throw new Error('modem not connected');
@@ -75,9 +77,7 @@ export class ModemLifecycle {
     this.transport = null;
     this.engine = null;
     this.service = null;
-    this.status.connected = false;
-    this.status.port = '';
-    this.status.error = '';
+    this.disconnected('');
     this.port = port;
     this.baud = baud;
     this.profile = profile;
@@ -95,6 +95,17 @@ export class ModemLifecycle {
     this.transport?.close();
     this.transport = null;
     this.engine = null;
+    this.service = null;
+    this.disconnected('');
+  }
+  private disconnected(error: string): void {
+    this.status.connected = false;
+    this.status.port = '';
+    this.status.error = error;
+    for (const feature of Object.keys(this.status.capabilities))
+      if (feature !== 'data') this.status.capabilities[feature] = false;
+    this.status.capabilityEvidence = undefined;
+    this.onStatusChange?.();
   }
   private schedule(): void {
     if (!this.stopping && !this.timer && !this.connecting) {
@@ -145,9 +156,14 @@ export class ModemLifecycle {
           );
         },
       );
-      this.transport = await discovery.find();
-      this.status.port = this.transport.path ?? '';
-      this.engine = new AtCommandEngine(this.transport, {
+      const transport = await (this.findTransport?.() ?? discovery.find());
+      if (this.stopping || !transport.isOpen) {
+        if (transport.isOpen) transport.close();
+        throw new Error('modem disconnected during discovery');
+      }
+      this.transport = transport;
+      this.status.port = transport.path ?? '';
+      this.engine = new AtCommandEngine(transport, {
         onUrc: (line) => {
           void this.onUrc(line).catch((error) => {
             this.status.error = error instanceof Error ? error.message : String(error);
@@ -186,28 +202,37 @@ export class ModemLifecycle {
         for (const [feature, item] of Object.entries(evidence.capabilities))
           this.status.capabilities[feature] = item.supported;
       }
+      if (this.transport !== transport || !transport.isOpen)
+        throw new Error('modem disconnected during initialization');
       this.status.connected = true;
       this.status.error = '';
       this.delay = 1000;
+      this.onStatusChange?.();
       await this.onReady();
     } catch (reason) {
-      this.status.connected = false;
-      this.status.error = reason instanceof Error ? reason.message : String(reason);
-      this.transport?.close();
-      this.transport = null;
-      this.schedule();
+      if (!this.stopping) {
+        const error = reason instanceof Error ? reason.message : String(reason);
+        this.engine?.disconnect(reason instanceof Error ? reason : new Error(error));
+        this.transport?.removeAllListeners();
+        if (this.transport?.isOpen) this.transport.close();
+        this.transport = null;
+        this.engine = null;
+        this.service = null;
+        this.disconnected(error);
+      }
     } finally {
       this.connecting = false;
+      if (!this.transport) this.schedule();
     }
   }
   private lost(): void {
     if (!this.transport || this.stopping) return;
-    this.status.connected = false;
     this.engine?.disconnect();
     this.transport.removeAllListeners();
     this.transport = null;
     this.engine = null;
     this.service = null;
+    this.disconnected('Modem disconnected');
     this.schedule();
   }
 }

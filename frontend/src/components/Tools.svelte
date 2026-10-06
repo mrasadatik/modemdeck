@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, formatTime } from '../lib/api';
-  import type { Compatibility, Health, Readiness } from '../lib/types';
+  import type { Compatibility, DataState, Health, Readiness } from '../lib/types';
   import Page from './Page.svelte';
   import { notify } from '../lib/store';
   let capabilities: Record<string, boolean> = {};
@@ -8,6 +8,8 @@
   let readiness: Readiness | undefined;
   let compatibility: Compatibility | undefined;
   let configuration: Record<string, unknown> = {};
+  let availablePorts: Array<{ path: string; label: string }> = [];
+  let dialupProfiles: string[] = [];
   let port = '',
     baud = 115200,
     dialup = '',
@@ -25,6 +27,24 @@
     } catch (error) {
       notify((error as Error).message);
     }
+  }
+  async function loadOptions(): Promise<void> {
+    const [ports, data] = await Promise.allSettled([
+      api<typeof availablePorts>('ports'),
+      api<DataState>('data'),
+    ]);
+    if (ports.status === 'fulfilled') availablePorts = ports.value;
+    else notify((ports.reason as Error).message);
+    if (data.status === 'fulfilled')
+      dialupProfiles = [
+        ...new Set(
+          (data.value.candidates || [])
+            .filter(
+              (candidate) => candidate.method === 'ras-ppp' && candidate.control === 'controllable',
+            )
+            .map((candidate) => candidate.name),
+        ),
+      ];
   }
   async function loadConfig(): Promise<void> {
     configuration = await api<Record<string, unknown>>('config');
@@ -53,7 +73,7 @@
       notify((error as Error).message);
     }
   }
-  void Promise.all([refresh(), loadConfig()]);
+  void Promise.all([refresh(), loadConfig(), loadOptions()]);
 </script>
 
 <Page
@@ -61,7 +81,9 @@
   title="Capabilities"
   description="What this modem has actually reported during live probing."
   ><svelte:fragment slot="actions"
-    ><button class="button secondary" on:click={refresh}>↻ Recheck</button></svelte:fragment
+    ><button class="button secondary" on:click={() => void Promise.all([refresh(), loadOptions()])}
+      >↻ Recheck</button
+    ></svelte:fragment
   >
   <div class="grid">
     <div class="card span-4">
@@ -89,13 +111,42 @@
       <div class="grid">
         <label class="span-4"
           ><div class="label">Modem port</div>
-          <input class="input" bind:value={port} placeholder="Automatic" /></label
+          <input
+            class="input"
+            bind:value={port}
+            list="available-modem-ports"
+            placeholder="Automatic"
+          />
+          <datalist id="available-modem-ports">
+            {#each availablePorts as option (option.path)}<option value={option.path}
+                >{option.label}</option
+              >{/each}
+          </datalist></label
         ><label class="span-4"
           ><div class="label">Baud rate</div>
-          <input class="input" type="number" bind:value={baud} min="1200" max="4000000" /></label
+          <input
+            class="input"
+            type="number"
+            bind:value={baud}
+            list="common-baud-rates"
+            min="1200"
+            max="4000000"
+          />
+          <datalist id="common-baud-rates">
+            <option value="9600"></option><option value="57600"></option><option value="115200"
+            ></option><option value="230400"></option><option value="460800"></option>
+          </datalist></label
         ><label class="span-4"
           ><div class="label">Dial-up profile</div>
-          <input class="input" bind:value={dialup} placeholder="Auto-discover" /></label
+          <input
+            class="input"
+            bind:value={dialup}
+            list="dialup-profiles"
+            placeholder="Auto-discover"
+          />
+          <datalist id="dialup-profiles">
+            {#each dialupProfiles as name (name)}<option value={name}></option>{/each}
+          </datalist></label
         >
         <label class="span-4"
           ><div class="label">Modem profile</div>

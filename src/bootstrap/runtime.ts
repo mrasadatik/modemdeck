@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { SerialPort } from 'serialport';
 import { createApp } from './app.js';
 import { createModemRoutes } from '../interfaces/http/modem-routes.js';
 import { HttpServerAdapter } from '../interfaces/http/http-server-adapter.js';
@@ -127,14 +128,13 @@ const lifecycle = new ModemLifecycle(
   status,
   urc,
   async () => {
-    status.connected = true;
-    emit('status', status);
     await sms.import(command);
   },
   { enabled: config.captureRaw === true, path: config.capturePath || 'data/traces/live.ndjson' },
   createProfileRegistry().select({ profileId: config.profile }),
   audit.record,
   async () => listWindowsModems(run),
+  () => emit('status', status),
 );
 const routes = createModemRoutes({
   db,
@@ -213,6 +213,19 @@ routes['GET /ready'] = async () => ({
   ready: status.connected,
   modem: status.connected ? 'connected' : 'disconnected',
 });
+routes['GET /api/ports'] = async () => {
+  const [listed, modems] = await Promise.all([SerialPort.list(), listWindowsModems(run)]);
+  const ports = new Map<string, { path: string; label: string }>();
+  for (const item of listed)
+    ports.set(item.path, {
+      path: item.path,
+      label: (item as typeof item & { friendlyName?: string }).friendlyName || item.path,
+    });
+  for (const modem of modems)
+    if (modem.status === 'OK' && modem.attachedTo)
+      ports.set(modem.attachedTo, { path: modem.attachedTo, label: modem.name });
+  return [...ports.values()];
+};
 routes['GET /api/capabilities'] = async () => ({ ...status.capabilities });
 routes['GET /api/compatibility'] = async () => ({
   profile: config.profile || 'generic-standards',

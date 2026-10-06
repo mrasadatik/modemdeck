@@ -125,7 +125,6 @@
             value={rule.number}
             placeholder="+880…"
           />
-          />
           <div class="row">
             <button
               class="button"
