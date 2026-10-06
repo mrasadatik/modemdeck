@@ -1,11 +1,12 @@
 <script lang="ts">
   import { activeView, status } from '../lib/store';
-  export let items: Array<{ id: string; icon: string; label: string }>;
+  import { HugeiconsIcon } from '@hugeicons/svelte';
+  export let items: Array<{ id: string; icon: unknown; label: string }>;
 </script>
 
 <aside class="sidebar">
   <div class="brand">
-    <div class="brand-mark" aria-hidden="true">⌁</div>
+    <img class="brand-mark" src="/logo.png" alt="ModemDeck logo" />
     <div><strong>ModemDeck</strong><small>PRIVATE DEVICE CONSOLE</small></div>
   </div>
   <div class="nav-label">Workspace</div>
@@ -14,7 +15,13 @@
         class:active={$activeView === item.id}
         aria-current={$activeView === item.id ? 'page' : undefined}
         on:click={() => activeView.set(item.id)}
-        ><span aria-hidden="true">{item.icon}</span>{item.label}</button
+        >{#if typeof item.icon === 'string'}<span aria-hidden="true">{item.icon}</span
+          >{:else}<HugeiconsIcon
+            icon={item.icon as never}
+            size={18}
+            color="currentColor"
+            strokeWidth={1.5}
+          />{/if}{item.label}</button
       >{/each}
   </nav>
   <div class="side-bottom">

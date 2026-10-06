@@ -1,6 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from './lib/api';
+  import {
+    AntennaIcon,
+    ArrowTurnForwardIcon,
+    CallIcon,
+    CodeIcon,
+    ContactBookIcon,
+    DashboardSquare01Icon,
+    Globe02Icon,
+    Mail01Icon,
+    SentIcon,
+    Settings02Icon,
+  } from '@hugeicons/core-free-icons';
   import type { State } from './lib/types';
   import { activeView, notify, status, toast } from './lib/store';
   import Sidebar from './components/Sidebar.svelte';
@@ -13,16 +25,16 @@
   import Operations from './components/Operations.svelte';
 
   const items = [
-    { id: 'overview', icon: '⌂', label: 'Overview' },
-    { id: 'inbox', icon: '▱', label: 'Inbox' },
-    { id: 'send', icon: '＋', label: 'Send SMS' },
-    { id: 'ussd', icon: '⌁', label: 'USSD' },
-    { id: 'calls', icon: '◌', label: 'Call log' },
-    { id: 'contacts', icon: '♧', label: 'Phonebook' },
-    { id: 'network', icon: '◉', label: 'Network' },
-    { id: 'forwarding', icon: '↗', label: 'Forwarding' },
-    { id: 'data', icon: '⇄', label: 'Mobile data' },
-    { id: 'settings', icon: '⚙', label: 'Capabilities' },
+    { id: 'overview', icon: DashboardSquare01Icon, label: 'Overview' },
+    { id: 'inbox', icon: Mail01Icon, label: 'Inbox' },
+    { id: 'send', icon: SentIcon, label: 'Send SMS' },
+    { id: 'ussd', icon: CodeIcon, label: 'USSD' },
+    { id: 'calls', icon: CallIcon, label: 'Call log' },
+    { id: 'contacts', icon: ContactBookIcon, label: 'Phonebook' },
+    { id: 'network', icon: AntennaIcon, label: 'Network' },
+    { id: 'forwarding', icon: ArrowTurnForwardIcon, label: 'Forwarding' },
+    { id: 'data', icon: Globe02Icon, label: 'Mobile data' },
+    { id: 'settings', icon: Settings02Icon, label: 'Capabilities' },
   ];
   const labels = Object.fromEntries(
     items.map((item) => [

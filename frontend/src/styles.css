@@ -1,5 +1,6 @@
 :root {
   font-family:
+    'IBM Plex Sans',
     Inter,
     ui-sans-serif,
     system-ui,
@@ -64,6 +65,12 @@ body {
   height: 100vh;
   overflow: hidden;
 }
+#app {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
 button,
 input,
 textarea,
@@ -125,14 +132,9 @@ button {
   margin-top: 2px;
 }
 .brand-mark {
-  align-items: center;
-  background: var(--blue);
   border-radius: 11px;
-  color: #11111b;
-  display: grid;
-  font-weight: 900;
   height: 34px;
-  place-items: center;
+  object-fit: cover;
   width: 34px;
 }
 .nav-label {
@@ -462,7 +464,8 @@ th {
   border-radius: 10px;
   color: #a6e3a1;
   font:
-    12px ui-monospace,
+    12px 'JetBrains Mono',
+    ui-monospace,
     SFMono-Regular,
     Consolas,
     monospace;
@@ -545,7 +548,8 @@ th {
   .sidebar nav button {
     white-space: nowrap;
   }
-  .sidebar nav span {
+  .sidebar nav span,
+  .sidebar nav svg {
     display: none;
   }
   .topbar {
