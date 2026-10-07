@@ -1,4 +1,12 @@
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+
+test.beforeAll(() => {
+  // Wipe the dev SQLite DB + any onboarding artifacts so tests run from a clean auth state
+  // Only wipe onboarding artifacts; SQLite may be open by the WebServer process
+  for (const f of fs.readdirSync('data'))
+    if (/\.json$/.test(f)) fs.rmSync(`data/${f}`, { force: true });
+});
 
 test('first-run setup creates the profile, then the app shell loads', async ({ page, request }) => {
   const setup = await request.post('/api/auth/setup', {

@@ -4,27 +4,30 @@ import { execFileSync } from 'node:child_process';
 const ALG = 'aes-256-gcm';
 const PS = 'powershell.exe';
 
-/** Wrap raw bytes with Windows DPAPI (CurrentUser scope). Returns base64 or null on failure. */
-export function osProtect(plain: Buffer): string | null {
+/** Wrap many raw buffers with Windows DPAPI in a single process. Returns base64 or null per input. */
+export function osProtectBulk(plains: Buffer[]): (string | null)[] {
   try {
+    const joined = plains.map((p) => p.toString('base64')).join('|');
     const out = execFileSync(
       PS,
       [
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Add-Type -AssemblyName System.Security;[Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([Convert]::FromBase64String($env:MD_PLAIN),$null,1))',
+        `Add-Type -AssemblyName System.Security;($env:MD_PLAINS.Split('|') | ForEach-Object { [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([Convert]::FromBase64String($_),$null,1)) }) -join '|'`,
       ],
-      {
-        env: { ...process.env, MD_PLAIN: plain.toString('base64') },
-        encoding: 'utf8',
-        timeout: 10000,
-      },
+      { env: { ...process.env, MD_PLAINS: joined }, encoding: 'utf8', timeout: 20000 },
     ).trim();
-    return out || null;
+    if (!out) return plains.map(() => null);
+    return out.split('|').map((s) => s || null);
   } catch {
-    return null;
+    return plains.map(() => null);
   }
+}
+
+/** Wrap raw bytes with Windows DPAPI (CurrentUser scope). Returns base64 or null on failure. */
+export function osProtect(plain: Buffer): string | null {
+  return osProtectBulk([plain])[0];
 }
 
 /** Unwrap raw bytes previously wrapped with osProtect. Returns null on failure. */

@@ -7,6 +7,7 @@ import {
   encryptText,
   verifyHash,
   osProtect,
+  osProtectBulk,
   osUnprotect,
 } from '../../infrastructure/crypto/vault.js';
 import { unlockSession, lockSession, sessionKeyOrNull } from '../../bootstrap/session.js';
@@ -92,9 +93,16 @@ export function createAuthRoutes({
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('-');
       const pwKey = deriveKey(password, salt);
-      const osWrapped = osProtect(dataKey);
-      const storedRecovery =
-        typeof body.recovery === 'string' ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20) : '';
+      const [osWrapped, osRecoveryEnc, osSimIdEnc] = osProtectBulk([
+        dataKey,
+        Buffer.from(
+          typeof body.recovery === 'string'
+            ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
+            : '',
+          'utf8',
+        ),
+        Buffer.from(activeSimId() || '', 'utf8'),
+      ]);
       fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
       fs.writeFileSync(
         CRED_FILE(rootDir),
@@ -113,8 +121,8 @@ export function createAuthRoutes({
           osVersion: osWrapped ? 3 : 2,
           ...(osWrapped
             ? {
-                recovery_os: osProtect(Buffer.from(storedRecovery, 'utf8')) ?? '',
-                simId_os: osProtect(Buffer.from(activeSimId() || '', 'utf8')) ?? '',
+                recovery_os: osRecoveryEnc ?? '',
+                simId_os: osSimIdEnc ?? '',
               }
             : {
                 recovery:
