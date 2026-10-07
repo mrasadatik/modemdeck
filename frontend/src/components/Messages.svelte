@@ -2,14 +2,27 @@
   import { api, formatTime } from '../lib/api';
   import type { State } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify } from '../lib/store';
+  import { defaultCountry, notify } from '../lib/store';
+  import { parsePhoneNumberFromString } from 'libphonenumber-js';
+  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   export let state: State;
   export let mode: 'inbox' | 'send' | 'ussd';
   let to = '',
+    smsCountry = '',
     text = '',
     code = '',
     reply = '',
     result = 'No active session.';
+  $: smsCountry = smsCountry || $defaultCountry;
+  function normalizeNumber(value: string, country: string): string {
+    if (!value.trim()) return value;
+    try {
+      const p = parsePhoneNumberFromString(value.trim(), (country || undefined) as never);
+      return p?.isValid() ? p.number : value;
+    } catch {
+      return value;
+    }
+  }
   $: recentNumbers = [
     ...new Set([
       ...state.sent.map((message) => message.to),
@@ -31,7 +44,10 @@
   async function send(): Promise<void> {
     if (!confirm('Send this SMS? Your carrier may charge for it.')) return;
     try {
-      const sent = await api<{ parts: number }>('sms', { to, text });
+      const sent = await api<{ parts: number }>('sms', {
+        to: normalizeNumber(to, smsCountry),
+        text,
+      });
       notify(`Sent · ${sent.parts} part(s)`);
       to = '';
       text = '';
@@ -82,6 +98,12 @@
     ><div class="grid">
       <div class="card span-8">
         <div class="label">Recipient</div>
+        <select class="input" bind:value={smsCountry} aria-label="Country of recipient">
+          <option value="">Use profile default</option>
+          {#each ALL_COUNTRIES as code (code)}
+            <option value={code}>{countryNames()[code] ?? code} ({code})</option>
+          {/each}
+        </select>
         <input
           class="input"
           aria-label="Destination number"

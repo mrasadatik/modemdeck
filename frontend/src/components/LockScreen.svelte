@@ -9,7 +9,7 @@
     gender = 'male',
     simLabel = '',
     number = '',
-    country = 'US',
+    country = '',
     image = '',
     password = '',
     confirm = '',
@@ -167,6 +167,7 @@
       <input class="input" bind:value={number} aria-label="SIM number" />
       <div class="label">Default country</div>
       <select class="input" bind:value={country} aria-label="Default country">
+        <option value="">None — require full international format</option>
         {#each ALL_COUNTRIES as code (code)}
           <option value={code}>{countryNames()[code] ?? code} ({code})</option>
         {/each}

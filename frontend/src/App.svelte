@@ -14,7 +14,7 @@
     Settings02Icon,
   } from '@hugeicons/core-free-icons';
   import type { State } from './lib/types';
-  import { activeView, notify, status, toast } from './lib/store';
+  import { activeView, defaultCountry, notify, status, toast } from './lib/store';
   import Sidebar from './components/Sidebar.svelte';
   import Topbar from './components/Topbar.svelte';
   import Dashboard from './components/Dashboard.svelte';
@@ -51,9 +51,14 @@
   let authChecked = false;
   async function checkAuth(): Promise<void> {
     try {
-      const a = await api<{ locked: boolean; configured: boolean }>('auth/status');
+      const a = await api<{
+        locked: boolean;
+        configured: boolean;
+        profile?: { country?: string };
+      }>('auth/status');
       locked = a.locked;
       configured = a.configured;
+      defaultCountry.set(a.profile?.country || '');
       authChecked = true;
     } catch {
       authChecked = true;

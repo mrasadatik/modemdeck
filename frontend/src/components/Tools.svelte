@@ -3,6 +3,7 @@
   import type { Compatibility, DataState, Health, Readiness } from '../lib/types';
   import Page from './Page.svelte';
   import { notify } from '../lib/store';
+  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   let capabilities: Record<string, boolean> = {};
   let health: Health | undefined;
   let readiness: Readiness | undefined;
@@ -10,6 +11,16 @@
   let configuration: Record<string, unknown> = {};
   let availablePorts: Array<{ path: string; label: string }> = [];
   let dialupProfiles: string[] = [];
+  let profileName = '',
+    profileCountry = '';
+  async function saveProfile(): Promise<void> {
+    try {
+      await api('auth/profile', { name: profileName, country: profileCountry });
+      notify('Profile updated');
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  }
   let port = '',
     baud = 115200,
     dialup = '',
@@ -50,6 +61,11 @@
   }
   async function loadConfig(): Promise<void> {
     configuration = await api<Record<string, unknown>>('config');
+    const auth = await api<{ profile?: { name?: string; country?: string } }>('auth/status').catch(
+      () => ({}) as { profile?: { name?: string; country?: string } },
+    );
+    profileName = auth.profile?.name || '';
+    profileCountry = auth.profile?.country || '';
     port = String(configuration.port || '');
     baud = Number(configuration.baud || 115200);
     dialup = String(configuration.dialup || '');
@@ -107,6 +123,26 @@
         <b>Generated</b><span>{compatibility ? formatTime(compatibility.generatedAt) : '—'}</span>
       </div>
       <p class="subtle">{compatibility?.note || 'Only live observations are reported.'}</p>
+    </div>
+    <div class="card span-12">
+      <h3>Profile defaults</h3>
+      <p class="subtle">Your profile country & name; used to normalize every phone number.</p>
+      <div class="grid">
+        <label class="span-4"
+          ><div class="label">Name</div>
+          <input class="input" bind:value={profileName} aria-label="Profile name" /></label
+        >
+        <label class="span-4"
+          ><div class="label">Default country</div>
+          <select class="input" bind:value={profileCountry} aria-label="Default country">
+            <option value="">None — require full international format</option>
+            {#each ALL_COUNTRIES as code (code)}
+              <option value={code}>{countryNames()[code] ?? code} ({code})</option>
+            {/each}
+          </select></label
+        >
+      </div>
+      <div class="row end"><button class="button" on:click={saveProfile}>Save profile</button></div>
     </div>
     <div class="card span-12">
       <h3>Runtime configuration</h3>

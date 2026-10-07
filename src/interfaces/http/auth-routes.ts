@@ -24,11 +24,12 @@ let failedLogins: number[] = [];
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
 
-/** Server-wide default country used for phone-number validation & formatting. */
-let currentCountry: string = 'US';
+/** Server-wide default country used for phone-number validation & formatting; empty = no default (require E.164 in numbers). */
+let currentCountry = '';
 export const getDefaultCountry = (): string => currentCountry;
 const setDefaultCountry = (country: unknown): void => {
-  if (typeof country === 'string' && country.length === 2) currentCountry = country.toUpperCase();
+  if (typeof country === 'string' && (country.length === 2 || country === ''))
+    currentCountry = country.toUpperCase();
 };
 
 /** Decrypt the simId/recovery metadata if the file uses DPAPI-wrapped fields. */
@@ -87,7 +88,7 @@ export function createAuthRoutes({
       const simLabel = typeof body.simLabel === 'string' ? body.simLabel.trim().slice(0, 120) : '';
       const number = typeof body.number === 'string' ? body.number.trim().slice(0, 40) : '';
       const country =
-        typeof body.country === 'string' ? body.country.slice(0, 2).toUpperCase() : 'US';
+        typeof body.country === 'string' ? body.country.slice(0, 2).toUpperCase() : '';
       const image =
         typeof body.image === 'string' && body.image.startsWith('data:image/')
           ? body.image.slice(0, 2_000_000)
@@ -232,6 +233,51 @@ export function createAuthRoutes({
         /* ignore */
       }
       return { ok: true };
+    },
+    'POST /api/auth/profile': async (body) => {
+      if (!sessionKeyOrNull()) throw Object.assign(new Error('locked'), { statusCode: 423 });
+      try {
+        const raw = fs.existsSync(PROFILE_FILE(rootDir))
+          ? fs.readFileSync(PROFILE_FILE(rootDir), 'utf8')
+          : null;
+        const current = JSON.parse(
+          raw ? (decryptText(sessionKeyOrNull()!, raw) ?? '{}') : '{}',
+        ) as Record<string, unknown>;
+        const next = {
+          name:
+            typeof body.name === 'string' && body.name.trim()
+              ? body.name.trim().slice(0, 120)
+              : (current.name ?? ''),
+          gender:
+            body.gender === 'male' || body.gender === 'female'
+              ? body.gender
+              : (current.gender ?? ''),
+          simLabel:
+            typeof body.simLabel === 'string' && body.simLabel.trim()
+              ? body.simLabel.trim().slice(0, 120)
+              : (current.simLabel ?? ''),
+          number:
+            typeof body.number === 'string' && body.number.trim()
+              ? body.number.trim().slice(0, 40)
+              : (current.number ?? ''),
+          image: current.image ?? '',
+          country:
+            typeof body.country === 'string'
+              ? body.country.length === 2
+                ? body.country.toUpperCase()
+                : ''
+              : (current.country ?? ''),
+          simId: current.simId ?? '',
+        } as Record<string, unknown>;
+        fs.writeFileSync(
+          PROFILE_FILE(rootDir),
+          encryptText(sessionKeyOrNull()!, JSON.stringify(next)),
+        );
+        setDefaultCountry(next.country);
+        return { ok: true, profile: next };
+      } catch (reason) {
+        throw Object.assign(new Error('profile update failed'), { cause: reason });
+      }
     },
     'POST /api/auth/logout': async () => {
       lockSession();

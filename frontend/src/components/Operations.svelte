@@ -3,7 +3,9 @@
   import { api, formatTime } from '../lib/api';
   import type { State } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify } from '../lib/store';
+  import { defaultCountry, notify } from '../lib/store';
+  import { parsePhoneNumberFromString } from 'libphonenumber-js';
+  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   export let mode: 'calls' | 'contacts' | 'forwarding';
   export let state: State;
   let store = 'SM',
@@ -12,6 +14,19 @@
     number = '',
     slot = '',
     dest = 'sim';
+  let contactCountry = '',
+    forwardCountry = '';
+  $: contactCountry = contactCountry || $defaultCountry;
+  $: forwardCountry = forwardCountry || $defaultCountry;
+  function normalizeNumber(value: string, country: string): string {
+    if (!value.trim()) return value;
+    try {
+      const p = parsePhoneNumberFromString(value.trim(), (country || undefined) as never);
+      return p?.isValid() ? p.number : value;
+    } catch {
+      return value;
+    }
+  }
   let forwarding: Array<{ reason: number; active: boolean; number: string }> = [];
   const labels = ['Always', 'When busy', 'No reply', 'Unreachable'];
   async function load(): Promise<void> {
@@ -106,14 +121,26 @@
             bind:value={slot}
             placeholder="First free slot"
           />
+          <select class="input" bind:value={contactCountry} aria-label="Contact country">
+            <option value="">Use profile default</option>
+            {#each ALL_COUNTRIES as code (code)}
+              <option value={code}>{countryNames()[code] ?? code} ({code})</option>
+            {/each}
+          </select>
           <select class="input" bind:value={dest} aria-label="Save destination">
             <option value="sim">Save to SIM</option>
             <option value="app">Save inside app (encrypted)</option>
           </select>
           <button
             class="button"
-            on:click={() => action('phonebook', { store, name, number, index: slot, dest })}
-            >Save contact</button
+            on:click={() =>
+              action('phonebook', {
+                store,
+                name,
+                number: normalizeNumber(number, contactCountry),
+                index: slot,
+                dest,
+              })}>Save contact</button
           >
         </div>
       </div>
@@ -129,6 +156,12 @@
             <h3>{labels[rule.reason]}</h3>
             <span class="badge" class:ok={rule.active}>{rule.active ? 'Active' : 'Inactive'}</span>
           </div>
+          <select class="input" bind:value={forwardCountry} aria-label="Forwarding country">
+            <option value="">Use profile default</option>
+            {#each ALL_COUNTRIES as code (code)}
+              <option value={code}>{countryNames()[code] ?? code} ({code})</option>
+            {/each}
+          </select>
           <input
             class="input"
             id={`forward-${rule.reason}`}
@@ -142,8 +175,10 @@
                 action('forwarding', {
                   reason: rule.reason,
                   on: true,
-                  number: (document.getElementById(`forward-${rule.reason}`) as HTMLInputElement)
-                    .value,
+                  number: normalizeNumber(
+                    (document.getElementById(`forward-${rule.reason}`) as HTMLInputElement).value,
+                    forwardCountry,
+                  ),
                 })}>Enable</button
             ><button
               class="button secondary"
