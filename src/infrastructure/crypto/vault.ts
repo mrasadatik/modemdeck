@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 const ALG = 'aes-256-gcm';
 const PS = 'powershell.exe';
 
-/** Wrap many raw buffers with Windows DPAPI in a single process. Returns base64 or null per input. */
+/** Wrap raw buffers with the OS protected-data API in a single process. Returns base64 or null per input. */
 export function osProtectBulk(plains: Buffer[]): (string | null)[] {
   try {
     const joined = plains.map((p) => p.toString('base64')).join('|');
@@ -25,7 +25,7 @@ export function osProtectBulk(plains: Buffer[]): (string | null)[] {
   }
 }
 
-/** Wrap raw bytes with Windows DPAPI (CurrentUser scope). Returns base64 or null on failure. */
+/** Wrap raw bytes with the OS protected-data API (CurrentUser scope). Returns base64 or null on failure. */
 export function osProtect(plain: Buffer): string | null {
   return osProtectBulk([plain])[0];
 }

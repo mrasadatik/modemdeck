@@ -9,7 +9,7 @@ Local-first web console for USB AT-command modems: SMS, USSD, call log, phoneboo
 - **Calls** — incoming-call log with caller ID
 - **Phonebook** — read/write contacts (SIM & modem storage, UCS2 names)
 - **Network** — signal, operator, registration (CS/PS/EPS), IMEI, firmware, APN
-- **Dial-up data** — toggle the OS dial-up profile, connect/disconnect from the UI (Windows RAS)
+- **Dial-up data** — toggle the OS dial-up profile, connect/disconnect from the UI
 - **Call forwarding** — view/set forwarding rules
 - **Raw AT console** — guarded interactive console
 - **Diagnostics** — modem capability probes, compatibility evidence, health/readiness endpoints
