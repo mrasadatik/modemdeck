@@ -4,6 +4,8 @@ export interface SmsMessage {
   from: string;
   ts: string;
   text: string;
+  /** SIM identity (hashed IMSI) this message was received under. */
+  simId?: string;
 }
 
 export interface SentMessage {
@@ -11,16 +13,19 @@ export interface SentMessage {
   text: string;
   ts: string;
   parts: number;
+  simId?: string;
 }
 
 export interface CallRecord {
   number: string;
   ts: string;
+  simId?: string;
 }
 export interface UssdResult {
   text: string;
   more: boolean;
   status: number;
+  simId?: string;
 }
 export interface PduSegment {
   length: number;

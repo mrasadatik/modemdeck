@@ -24,6 +24,7 @@ interface ModemRouteDependencies {
   at: Command;
   config: () => Record<string, unknown>;
   updateConfig: (body: ApiBody) => Promise<Record<string, unknown>>;
+  getSimId?: () => string | undefined;
 }
 
 /** HTTP route construction is kept separate from the transport and composition layers. */
@@ -48,6 +49,7 @@ export function createModemRoutes({
   at,
   config,
   updateConfig,
+  getSimId,
 }: ModemRouteDependencies): ApiRoutes {
   const text = (value: unknown, field: string): string => {
     if (typeof value !== 'string')
@@ -89,7 +91,7 @@ export function createModemRoutes({
           statusCode: 400,
         });
       const n = await sendSms(to, message);
-      const s = { to, text: message, ts: new Date().toISOString(), parts: n };
+      const s = { to, text: message, ts: new Date().toISOString(), parts: n, simId: getSimId?.() };
       db.sent.unshift(s);
       await save();
       return s;
@@ -116,7 +118,7 @@ export function createModemRoutes({
       if (!validateUssd(code))
         throw Object.assign(new Error('invalid USSD code'), { statusCode: 400 });
       const r = await ussd(code);
-      db.ussd.unshift({ code, ...r, ts: new Date().toISOString() });
+      db.ussd.unshift({ code, ...r, ts: new Date().toISOString(), simId: getSimId?.() });
       await save();
       return r;
     },

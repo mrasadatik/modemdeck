@@ -13,6 +13,7 @@ export class SmsIngestionService {
     private readonly db: ModemDatabase,
     private readonly repository: Repository<ModemDatabase>,
     private readonly publish: Publish,
+    private readonly getSimId?: () => string | undefined,
   ) {}
   ingest(hex: string): boolean {
     const id = createHash('sha1').update(hex).digest('hex');
@@ -37,7 +38,13 @@ export class SmsIngestionService {
       ).join('');
       delete this.db.parts[key];
     }
-    const sms = { id: id.slice(0, 12), from: message.from, ts: message.ts, text: message.text };
+    const sms = {
+      id: id.slice(0, 12),
+      from: message.from,
+      ts: message.ts,
+      text: message.text,
+      simId: this.getSimId?.(),
+    };
     this.db.sms.unshift(sms);
     this.db.sms.sort((a, b) => b.ts.localeCompare(a.ts));
     void this.repository.save();

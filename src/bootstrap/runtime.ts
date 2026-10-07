@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { SerialPort } from 'serialport';
 import { createApp } from './app.js';
 import { createModemRoutes } from '../interfaces/http/modem-routes.js';
@@ -16,6 +17,7 @@ import {
 import { validatePhone, validateUssd } from '../domain/services/protocol.js';
 import type { UssdResult } from '../domain/entities/types.js';
 import { createProfileRegistry } from '../infrastructure/modem/profiles.js';
+import { simScopedState } from '../application/sim-visibility.js';
 import { discoverMatchingRasProfiles } from '../infrastructure/windows/ras-profile-discovery.js';
 import { listWindowsModems } from '../infrastructure/windows/modem-provider.js';
 import { discoverWindowsDataTransports } from '../infrastructure/windows/data-transport-discovery.js';
@@ -27,6 +29,21 @@ const { config, repository, interaction } = composition;
 const db = repository.state;
 const sse = new SseHub();
 const emit = (event: string, value: unknown): void => sse.publish(event, value);
+let activeSimId = '';
+const syncSimIdentity = async (): Promise<void> => {
+  if (!status.connected) {
+    activeSimId = '';
+    return;
+  }
+  try {
+    const imsi = clean((await command('AT+CIMI', 5000).catch(() => [] as string[]))[0]);
+    activeSimId = imsi
+      ? createHash('sha256').update(`modemdeck:${imsi}`).digest('hex').slice(0, 16)
+      : '';
+  } catch {
+    activeSimId = '';
+  }
+};
 const status = {
   connected: false,
   port: '',
@@ -43,7 +60,7 @@ const status = {
 const command = (value: string, timeout = 8000, data?: string): Promise<string[]> =>
   lifecycle.command(value, timeout, data);
 const audit = interaction.child('runtime');
-const sms = new SmsIngestionService(db, repository, emit);
+const sms = new SmsIngestionService(db, repository, emit, () => activeSimId);
 const ussd = new UssdSessionManager(command);
 const network = new NetworkService(command);
 const phonebook = new PhonebookService(command);
@@ -95,7 +112,7 @@ const urc = async (line: string): Promise<void> => {
   }
   if (line.startsWith('+CLIP')) {
     const number = line.match(/"([^"]*)"/)?.[1] || 'Unknown';
-    const call = { number, ts: new Date().toISOString() };
+    const call = { number, ts: new Date().toISOString(), simId: activeSimId || undefined };
     db.calls.unshift(call);
     await repository.save();
     emit('call', call);
@@ -134,7 +151,10 @@ const lifecycle = new ModemLifecycle(
   createProfileRegistry().select({ profileId: config.profile }),
   audit.record,
   async () => listWindowsModems(run),
-  () => emit('status', status),
+  () => {
+    void syncSimIdentity();
+    emit('status', status);
+  },
 );
 const routes = createModemRoutes({
   db,
@@ -166,6 +186,7 @@ const routes = createModemRoutes({
     }
   },
   config: publicConfig,
+  getSimId: () => activeSimId || undefined,
   updateConfig: async (body) => {
     const next = { ...config };
     const editable = ['port', 'baud', 'dialup', 'profile', 'captureRaw', 'capturePath'] as const;
@@ -213,6 +234,7 @@ routes['GET /ready'] = async () => ({
   ready: status.connected,
   modem: status.connected ? 'connected' : 'disconnected',
 });
+routes['GET /api/state'] = async () => simScopedState(db, status, activeSimId);
 routes['GET /api/ports'] = async () => {
   const [listed, modems] = await Promise.all([SerialPort.list(), listWindowsModems(run)]);
   const ports = new Map<string, { path: string; label: string }>();
