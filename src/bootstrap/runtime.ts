@@ -128,7 +128,10 @@ const urc = async (line: string): Promise<void> => {
       await command(`AT+CPMS="${match[1]}"`);
       const lines = await command(`AT+CMGR=${match[2]}`);
       const pdu = lines.find((value) => /^[0-9A-F]{20,}$/i.test(value));
-      if (pdu) sms.ingest(pdu);
+      if (pdu) {
+        sms.ingest(pdu);
+        await command(`AT+CMGD=${match[2]}`).catch((): undefined => undefined);
+      }
     }
     return;
   }

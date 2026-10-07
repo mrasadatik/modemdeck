@@ -62,8 +62,12 @@ export class SmsIngestionService {
             lines[index]?.startsWith('+CMGL:') &&
             lines[index + 1] &&
             this.ingest(lines[index + 1])
-          )
+          ) {
             count++;
+            const slot = Number(/\+CMGL:\s*(\d+)/.exec(lines[index])?.[1]);
+            if (Number.isInteger(slot) && slot > 0)
+              await command(`AT+CMGD=${slot}`).catch(() => {});
+          }
       } catch {
         /* optional storage is modem-specific */
       }
