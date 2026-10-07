@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import { SerialPort } from 'serialport';
 import { createApp } from './app.js';
 import { createModemRoutes } from '../interfaces/http/modem-routes.js';
@@ -18,6 +19,8 @@ import { validatePhone, validateUssd } from '../domain/services/protocol.js';
 import type { UssdResult } from '../domain/entities/types.js';
 import { createProfileRegistry } from '../infrastructure/modem/profiles.js';
 import { simScopedState } from '../application/sim-visibility.js';
+import { createAuthRoutes } from '../interfaces/http/auth-routes.js';
+import { sessionKeyOrNull, lockSession } from './session.js';
 import { discoverMatchingRasProfiles } from '../infrastructure/windows/ras-profile-discovery.js';
 import { listWindowsModems } from '../infrastructure/windows/modem-provider.js';
 import { discoverWindowsDataTransports } from '../infrastructure/windows/data-transport-discovery.js';
@@ -42,6 +45,21 @@ const syncSimIdentity = async (): Promise<void> => {
       : '';
   } catch {
     activeSimId = '';
+  }
+  try {
+    const credsFile = `${process.cwd()}/data/credentials.json`;
+    if (activeSimId && fs.existsSync(credsFile)) {
+      const stored = JSON.parse(fs.readFileSync(credsFile, 'utf8')) as { simId?: string };
+      if (stored.simId && stored.simId !== activeSimId && sessionKeyOrNull()) {
+        lockSession();
+        repository.lock?.();
+        activeSimId = '';
+        status.error = 'SIM changed — unlock required';
+        emit('status', status);
+      }
+    }
+  } catch {
+    /* best-effort hot-swap check */
   }
 };
 const status = {
@@ -235,6 +253,12 @@ routes['GET /ready'] = async () => ({
   modem: status.connected ? 'connected' : 'disconnected',
 });
 routes['GET /api/state'] = async () => simScopedState(db, status, activeSimId);
+const auth = createAuthRoutes({
+  rootDir: process.cwd(),
+  repository,
+  activeSimId: () => activeSimId,
+});
+Object.assign(routes, auth);
 routes['GET /api/ports'] = async () => {
   const [listed, modems] = await Promise.all([SerialPort.list(), listWindowsModems(run)]);
   const ports = new Map<string, { path: string; label: string }>();
@@ -255,6 +279,22 @@ routes['GET /api/compatibility'] = async () => ({
   generatedAt: new Date().toISOString(),
   note: 'Only live probe evidence is reported; unavailable hardware is not inferred.',
 });
+const allowedUnauthenticated = new Set([
+  'GET /health',
+  'GET /ready',
+  'GET /api/state',
+  ...Object.keys(auth),
+]);
+for (const [key, handler] of Object.entries(routes)) {
+  if (!allowedUnauthenticated.has(key)) {
+    const protectedHandler = handler;
+    routes[key] = async (body, params) => {
+      if (!sessionKeyOrNull())
+        throw Object.assign(new Error('profile is locked — unlock first'), { statusCode: 423 });
+      return protectedHandler(body, params);
+    };
+  }
+}
 const server = new HttpServerAdapter({
   port: config.http,
   rootDir: process.cwd(),

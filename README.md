@@ -60,6 +60,9 @@ Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persis
 - Set `MODEMDECK_AUTH_TOKEN` to enforce Bearer auth on every endpoint, including `/health` and `/ready`. Without a token, localhost binding + Host validation is the security boundary.
 - Sensitive text is redacted in SQLite unless `MODEMDECK_PERSIST_SENSITIVE=true`. Detailed interaction logs (correlation IDs, command/response) are recorded; payload logging is opt-in.
 - The UI shows a **non-blocking** notice that this is a personal, local tool for lawful use. Acknowledging is never enforced — you are solely responsible for using it lawfully and ethically.
+- At rest, every record (SMS/call/USSD text, audit detail, parts) is AES-256-GCM encrypted with a key derived from your profile credential (scrypt). Nothing plaintext is written to SQLite.
+- A profile (name, SIM label, optional SIM number, gender, optional image) is created on first run with a credential. Every protected endpoint requires an unlocked session; while locked they all return 423.
+- SIM anomaly: after a SIM swap hot-plug event, if the connected SIM differs from the registered profile's SIM, the server locks immediately and emits an alert; unlocking with a profile-bound SIM is required before any data is re-exposed.
 
 ## Architecture
 

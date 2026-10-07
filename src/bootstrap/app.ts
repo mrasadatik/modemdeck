@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../infrastructure/config/config.js';
 import { createSqliteRepository } from '../infrastructure/persistence/sqlite-repository.js';
+import { sessionKeyOrNull } from './session.js';
 import { EventBus } from '../infrastructure/events/event-bus.js';
 import { createInteractionLog } from '../infrastructure/logging/interaction-log.js';
 
@@ -20,7 +21,11 @@ export function createApp({
       parts: {},
       seen: {},
     },
-    { persistSensitive: config.persistSensitive, retentionDays: config.retentionDays },
+    {
+      persistSensitive: config.persistSensitive,
+      retentionDays: config.retentionDays,
+      getKey: () => sessionKeyOrNull(),
+    },
   );
   const interaction = createInteractionLog(
     config.dataPath || path.join(rootDir, 'data', 'modemdeck.sqlite'),

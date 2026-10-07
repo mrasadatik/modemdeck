@@ -1,6 +1,10 @@
 import { test, expect } from '@playwright/test';
 
-test('loads the protected application shell and navigates through the GUI', async ({ page }) => {
+test('first-run setup creates the profile, then the app shell loads', async ({ page, request }) => {
+  const setup = await request.post('/api/auth/setup', {
+    data: { name: 'Tester', gender: 'male', simLabel: 'lab', password: 'pass1234' },
+  });
+  expect([200, 409]).toContain(setup.status());
   await page.goto('/');
   await expect(page).toHaveTitle(/ModemDeck/i);
   await expect(page.getByRole('button', { name: /Overview$/ })).toBeVisible();
