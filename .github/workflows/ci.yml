@@ -24,6 +24,8 @@ jobs:
       - run: npm run build:all
       - run: node --test "dist/test/*.test.js"
       - run: npx vitest run
+      - run: npm run test:coverage
+      - run: npm run test:coverage:ui
 
   e2e:
     runs-on: windows-latest
