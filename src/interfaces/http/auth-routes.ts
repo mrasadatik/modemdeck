@@ -6,6 +6,8 @@ import {
   decryptText,
   encryptText,
   verifyHash,
+  osProtect,
+  osUnprotect,
 } from '../../infrastructure/crypto/vault.js';
 import { unlockSession, lockSession, sessionKeyOrNull } from '../../bootstrap/session.js';
 import type { Repository } from '../../domain/ports/repository.js';
@@ -68,6 +70,7 @@ export function createAuthRoutes({
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('-');
       const pwKey = deriveKey(password, salt);
+      const osWrapped = osProtect(dataKey);
       fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
       fs.writeFileSync(
         CRED_FILE(rootDir),
@@ -82,6 +85,8 @@ export function createAuthRoutes({
           verify: verifyHash(password, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
           wrapPhrase: encryptText(deriveKey(phrase, salt), dataKey.toString('base64')),
+          osProtected: osWrapped ?? '',
+          osVersion: osWrapped ? 3 : 2,
         }),
         { mode: 0o600 },
       );
@@ -113,6 +118,8 @@ export function createAuthRoutes({
         version?: number;
         simId?: string;
         wrapData?: string;
+        osProtected?: string;
+        osVersion?: number;
       };
       const salt = Buffer.from(stored.salt, 'base64');
       const keyMaterial = deriveKey(password, salt);
@@ -125,12 +132,16 @@ export function createAuthRoutes({
         throw Object.assign(new Error('SIM mismatch: this profile belongs to a different SIM'), {
           statusCode: 403,
         });
-      const dataKey =
-        stored.version === 2 && stored.wrapData
-          ? Buffer.from(decryptText(keyMaterial, stored.wrapData) ?? '', 'base64')
-          : keyMaterial;
-      unlockSession(dataKey.length === 32 ? dataKey : keyMaterial);
-      repository.unlock?.(dataKey.length === 32 ? dataKey : keyMaterial);
+      let dataKey: Buffer = keyMaterial;
+      if (stored.osVersion === 3 && stored.osProtected) {
+        const unwrapped = osUnprotect(stored.osProtected);
+        if (unwrapped) dataKey = unwrapped;
+      } else if (stored.version === 2 && stored.wrapData) {
+        const decoded = Buffer.from(decryptText(keyMaterial, stored.wrapData) ?? '', 'base64');
+        if (decoded.length === 32) dataKey = decoded;
+      }
+      unlockSession(dataKey);
+      repository.unlock?.(dataKey);
       return { ok: true };
     },
     'POST /api/auth/logout': async () => {
@@ -148,8 +159,10 @@ export function createAuthRoutes({
         recovery?: string;
         wrapData?: string;
         wrapPhrase?: string;
+        osProtected?: string;
+        osVersion?: number;
       };
-      if (stored.version !== 2 || !stored.wrapPhrase)
+      if (!stored.wrapPhrase)
         throw Object.assign(new Error('recovery phrase not available for this profile'), {
           statusCode: 404,
         });
@@ -173,6 +186,8 @@ export function createAuthRoutes({
           verify: verifyHash(newPassword, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
           wrapPhrase: stored.wrapPhrase,
+          osProtected: stored.osProtected ?? '',
+          osVersion: stored.osVersion ?? 2,
         }),
         { mode: 0o600 },
       );
@@ -217,7 +232,7 @@ export function createAuthRoutes({
       }
       const salt = randomBytes(16);
       const dataKey = randomBytes(32);
-      const pwKey = deriveKey(newPassword, salt);
+      const osWrapped = osProtect(dataKey);
       fs.writeFileSync(
         CRED_FILE(rootDir),
         JSON.stringify({
@@ -226,8 +241,10 @@ export function createAuthRoutes({
           recovery: stored.recovery || '',
           salt: salt.toString('base64'),
           verify: verifyHash(newPassword, salt).toString('base64'),
-          wrapData: encryptText(pwKey, dataKey.toString('base64')),
+          wrapData: '',
           wrapPhrase: '',
+          osProtected: osWrapped ?? '',
+          osVersion: osWrapped ? 3 : 2,
         }),
         { mode: 0o600 },
       );
