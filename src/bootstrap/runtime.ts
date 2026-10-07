@@ -15,7 +15,9 @@ import {
   ForwardingService,
   DialupAdapter,
 } from '../application/modem-services.js';
-import { validatePhone, validateUssd } from '../domain/services/protocol.js';
+import { validateUssd } from '../domain/services/protocol.js';
+import { getDefaultCountry } from '../interfaces/http/auth-routes.js';
+import { phoneIsValid } from '../domain/services/phone-numbers.js';
 import type { UssdResult } from '../domain/entities/types.js';
 import { createProfileRegistry } from '../infrastructure/modem/profiles.js';
 import { simScopedState } from '../application/sim-visibility.js';
@@ -198,7 +200,7 @@ const routes = createModemRoutes({
   status,
   clean,
   storeName,
-  validatePhone,
+  validatePhone: (value) => phoneIsValid(value, getDefaultCountry() || undefined),
   validateUssd,
   sendSms: (to: string, text: string) => lifecycle.sendSms(to, text),
   save: repository.save,

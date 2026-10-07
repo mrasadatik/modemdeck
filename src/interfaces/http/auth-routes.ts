@@ -24,6 +24,13 @@ let failedLogins: number[] = [];
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
 
+/** Server-wide default country used for phone-number validation & formatting. */
+let currentCountry: string = 'US';
+export const getDefaultCountry = (): string => currentCountry;
+const setDefaultCountry = (country: unknown): void => {
+  if (typeof country === 'string' && country.length === 2) currentCountry = country.toUpperCase();
+};
+
 /** Decrypt the simId/recovery metadata if the file uses DPAPI-wrapped fields. */
 function readMeta(stored: {
   osVersion?: number;
@@ -79,6 +86,8 @@ export function createAuthRoutes({
       const gender = body.gender === 'male' || body.gender === 'female' ? body.gender : null;
       const simLabel = typeof body.simLabel === 'string' ? body.simLabel.trim().slice(0, 120) : '';
       const number = typeof body.number === 'string' ? body.number.trim().slice(0, 40) : '';
+      const country =
+        typeof body.country === 'string' ? body.country.slice(0, 2).toUpperCase() : 'US';
       const image =
         typeof body.image === 'string' && body.image.startsWith('data:image/')
           ? body.image.slice(0, 2_000_000)
@@ -138,10 +147,19 @@ export function createAuthRoutes({
         PROFILE_FILE(rootDir),
         encryptText(
           dataKey,
-          JSON.stringify({ name, gender, simLabel, number, image, simId: activeSimId() || '' }),
+          JSON.stringify({
+            name,
+            gender,
+            simLabel,
+            number,
+            image,
+            country,
+            simId: activeSimId() || '',
+          }),
         ),
         { mode: 0o600 },
       );
+      setDefaultCountry(country);
       unlockSession(dataKey);
       repository.unlock?.(dataKey);
       return {
@@ -202,6 +220,17 @@ export function createAuthRoutes({
       }
       unlockSession(dataKey);
       repository.unlock?.(dataKey);
+      try {
+        if (fs.existsSync(PROFILE_FILE(rootDir))) {
+          const prof = decryptText(dataKey, fs.readFileSync(PROFILE_FILE(rootDir), 'utf8'));
+          if (prof) {
+            const p = JSON.parse(prof) as { country?: string };
+            if (p.country) setDefaultCountry(p.country);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
       return { ok: true };
     },
     'POST /api/auth/logout': async () => {
@@ -261,6 +290,17 @@ export function createAuthRoutes({
       // Session key is the data key — in-memory state restores without wiping history.
       unlockSession(dataKey);
       repository.unlock?.(dataKey);
+      try {
+        if (fs.existsSync(PROFILE_FILE(rootDir))) {
+          const prof = decryptText(dataKey, fs.readFileSync(PROFILE_FILE(rootDir), 'utf8'));
+          if (prof) {
+            const p = JSON.parse(prof) as { country?: string };
+            if (p.country) setDefaultCountry(p.country);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
       return { ok: true, preserved: true };
     },
     'POST /api/auth/recover/request': async () => {

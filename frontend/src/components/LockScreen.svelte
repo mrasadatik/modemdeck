@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { notify } from '../lib/store';
+  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   export let configured = false;
   export let onUnlock = (): void => {};
   const title = configured ? 'Unlock profile' : 'Create your profile';
@@ -8,6 +9,7 @@
     gender = 'male',
     simLabel = '',
     number = '',
+    country = 'US',
     image = '',
     password = '',
     confirm = '',
@@ -35,6 +37,7 @@
         gender,
         simLabel,
         number,
+        country,
         password,
         image,
         recovery,
@@ -162,6 +165,12 @@
       <input class="input" bind:value={simLabel} aria-label="SIM label" />
       <div class="label">SIM number (optional)</div>
       <input class="input" bind:value={number} aria-label="SIM number" />
+      <div class="label">Default country</div>
+      <select class="input" bind:value={country} aria-label="Default country">
+        {#each ALL_COUNTRIES as code (code)}
+          <option value={code}>{countryNames()[code] ?? code} ({code})</option>
+        {/each}
+      </select>
       <div class="label">Trusted recovery number</div>
       <input class="input" bind:value={recovery} aria-label="Recovery number" />
       <div class="label">Profile image (optional)</div>

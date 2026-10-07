@@ -30,6 +30,7 @@
     "@hugeicons/core-free-icons": "^4.3.5",
     "@hugeicons/svelte": "^1.1.5",
     "better-sqlite3": "^11.10.0",
+    "libphonenumber-js": "^1.13.14",
     "selfsigned": "^5.5.0",
     "serialport": "^12.0.0"
   },
