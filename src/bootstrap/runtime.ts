@@ -24,9 +24,7 @@ import { simScopedState } from '../application/sim-visibility.js';
 import { createAuthRoutes } from '../interfaces/http/auth-routes.js';
 import { sessionKeyOrNull, lockSession, sessionStartAt } from './session.js';
 import { osUnprotect } from '../infrastructure/crypto/vault.js';
-import { discoverMatchingRasProfiles } from '../infrastructure/platform/ras-profile-discovery.js';
-import { listPlatformModems } from '../infrastructure/platform/modem-provider.js';
-import { discoverPlatformDataTransports } from '../infrastructure/platform/data-transport-discovery.js';
+import { createWindowsProvider } from '../infrastructure/platform/providers.js';
 import { DataTransportSelector } from '../application/data-transport-selector.js';
 import { saveConfig, validateConfig } from '../infrastructure/config/config.js';
 
@@ -104,13 +102,9 @@ const run = (file: string, args: string[]): Promise<{ ok: boolean; out: string }
       resolve({ ok: !error, out: String(stdout || stderr || error?.message || '') }),
     ),
   );
-const dialup = new DialupAdapter(config.dialup, run, async () => {
-  const modems = await listPlatformModems(run);
-  return discoverMatchingRasProfiles({
-    modemNames: modems.filter((item) => item.status === 'OK').map((item) => item.name),
-  });
-});
-const dataTransports = new DataTransportSelector(() => discoverPlatformDataTransports(run));
+const provider = createWindowsProvider(run);
+const dialup = new DialupAdapter(config.dialup, run, () => provider.discoverDialupProfiles());
+const dataTransports = new DataTransportSelector(() => provider.discoverDataTransports());
 const dataState = async (): Promise<Record<string, unknown>> => {
   const candidates = await dataTransports.all();
   return { ...(await dialup.state()), selected: candidates[0], candidates };
@@ -189,7 +183,7 @@ const lifecycle = new ModemLifecycle(
   { enabled: config.captureRaw === true, path: config.capturePath || 'data/traces/live.ndjson' },
   createProfileRegistry().select({ profileId: config.profile }),
   audit.record,
-  async () => listPlatformModems(run),
+  () => provider.listModems(),
   () => {
     void syncSimIdentity();
     emit('status', status);
@@ -301,7 +295,7 @@ const auth = createAuthRoutes({
 });
 Object.assign(routes, auth);
 routes['GET /api/ports'] = async () => {
-  const [listed, modems] = await Promise.all([SerialPort.list(), listPlatformModems(run)]);
+  const [listed, modems] = await Promise.all([SerialPort.list(), provider.listModems()]);
   const ports = new Map<string, { path: string; label: string }>();
   for (const item of listed)
     ports.set(item.path, {
