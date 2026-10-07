@@ -7,3 +7,4 @@ public/
 test-results/
 playwright-report/
 .test-sqlite/
+coverage/
