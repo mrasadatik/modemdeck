@@ -1,15 +1,15 @@
-export interface WindowsModem {
+export interface PlatformModem {
   name: string;
   attachedTo?: string;
   status?: string;
 }
 
-export type WindowsCommand = (
+export type PlatformCommand = (
   file: string,
   args: string[],
 ) => Promise<{ ok: boolean; out: string }>;
 
-export async function listWindowsModems(run: WindowsCommand): Promise<WindowsModem[]> {
+export async function listPlatformModems(run: PlatformCommand): Promise<PlatformModem[]> {
   const result = await run('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',

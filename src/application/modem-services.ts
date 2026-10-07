@@ -263,7 +263,7 @@ export class DialupAdapter {
   }
   async set(on: boolean): Promise<{ configured: boolean; on: boolean; name?: string }> {
     const profile = await this.profile();
-    if (!profile.name) throw new Error('no matching Windows dial-up profile was found');
+    if (!profile.name) throw new Error('no matching OS dial-up profile was found');
     const current = await this.state();
     if (current.on === on) return current;
     const result = await this.run('rasdial', on ? [profile.name] : [profile.name, '/DISCONNECT']);

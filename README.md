@@ -105,7 +105,7 @@ Utilities: `npm run capture:trace -- COM3` records real serial traffic to NDJSON
 
 ## Troubleshooting
 
-- **No modem detected**: verify the COM port in Device Manager, close any competing serial client, and check the modem is not in use by the Windows dial-up connection. The app retries discovery after a failed probe or unplug; reconnect the device and wait for the status to update. You can choose a detected port in Capabilities → Runtime configuration or pin `port` in `config.json`.
+- **No modem detected**: check the modem port in your OS device manager, close any competing serial client, and check the modem is not in use by the OS dial-up connection. The app retries discovery after a failed probe or unplug; reconnect the device and wait for the status to update. You can choose a detected port in Capabilities → Runtime configuration or pin `port` in `config.json`.
 - **Phonebook names look wrong**: most modems use UCS2; if yours differs, please open an issue with the output of `AT+CPBR=?`.
 - **Data toggle fails**: ensure the dial-up profile name matches exactly and the modem is attached to that profile (see README's dial-up tip above).
 

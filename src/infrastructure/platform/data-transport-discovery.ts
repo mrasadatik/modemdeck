@@ -2,9 +2,9 @@ import type {
   DataTransportCandidate,
   DataTransportMethod,
 } from '../../domain/entities/data-transport.js';
-import type { WindowsCommand } from './modem-provider.js';
+import type { PlatformCommand } from './modem-provider.js';
 import { discoverMatchingRasProfiles } from './ras-profile-discovery.js';
-import { listWindowsModems } from './modem-provider.js';
+import { listPlatformModems } from './modem-provider.js';
 
 interface AdapterRow {
   Name?: string;
@@ -32,11 +32,11 @@ const adapterMethod = (row: AdapterRow): DataTransportMethod | undefined => {
   return undefined;
 };
 
-export async function discoverWindowsDataTransports(
-  run: WindowsCommand,
+export async function discoverPlatformDataTransports(
+  run: PlatformCommand,
 ): Promise<DataTransportCandidate[]> {
   const [modems, adapters, ras] = await Promise.all([
-    listWindowsModems(run),
+    listPlatformModems(run),
     run('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
@@ -56,7 +56,7 @@ export async function discoverWindowsDataTransports(
       profile,
       modemName: modemNames[0],
       connected: new RegExp(`^Connected to\\s+${escapeRegExp(profile)}\\s*$`, 'mi').test(ras.out),
-      evidence: ['matching Windows RAS phonebook profile', 'matching installed modem provider'],
+      evidence: ['matching OS RAS phonebook profile', 'matching installed modem provider'],
     });
   for (const row of parseRows<AdapterRow>(adapters.out)) {
     const method = adapterMethod(row);
@@ -68,7 +68,7 @@ export async function discoverWindowsDataTransports(
       interfaceIndex: typeof row.ifIndex === 'number' ? row.ifIndex : undefined,
       interfaceDescription: row.InterfaceDescription,
       connected: row.Status?.toLowerCase() === 'up',
-      evidence: ['Windows network adapter metadata'],
+      evidence: ['platform network adapter metadata'],
     });
   }
   return candidates;

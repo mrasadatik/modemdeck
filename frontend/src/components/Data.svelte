@@ -44,7 +44,7 @@
 <Page
   eyebrow="Connectivity"
   title="Mobile data"
-  description="Control the Windows data session and modem network profile."
+  description="Control the OS data session and modem network profile."
   ><div class="grid">
     <div class="card span-8">
       <div class="row between">

@@ -42,7 +42,7 @@
       <div class="metric">
         {data?.configured ? (data.on ? 'Connected' : 'Disconnected') : 'Unavailable'}
       </div>
-      <div class="subtle">{data?.name || 'Checking Windows profile'}</div>
+      <div class="subtle">{data?.name || 'Checking OS dial-up profile'}</div>
     </div>
     <div class="card span-4">
       <div class="subtle">SIGNAL QUALITY</div>

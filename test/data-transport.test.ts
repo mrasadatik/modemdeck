@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DataTransportSelector } from '../src/application/data-transport-selector.js';
-import { discoverWindowsDataTransports } from '../src/infrastructure/windows/data-transport-discovery.js';
+import { discoverPlatformDataTransports } from '../src/infrastructure/platform/data-transport-discovery.js';
 
 test('data transport discovery detects RAS and excludes ordinary Wi-Fi', async () => {
   const run = async (file: string, args: string[]): Promise<{ ok: boolean; out: string }> => {
@@ -19,7 +19,7 @@ test('data transport discovery detects RAS and excludes ordinary Wi-Fi', async (
     if (file === 'rasdial') return { ok: true, out: 'Connected to\\r\\nWireless Terminal\\r\\n' };
     return { ok: true, out: '[]' };
   };
-  const candidates = await discoverWindowsDataTransports(run);
+  const candidates = await discoverPlatformDataTransports(run);
   assert.equal(
     candidates.some((item) => item.method === 'ras-ppp'),
     true,

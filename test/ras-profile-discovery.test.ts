@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverMatchingRasProfiles } from '../src/infrastructure/windows/ras-profile-discovery.js';
+import { discoverMatchingRasProfiles } from '../src/infrastructure/platform/ras-profile-discovery.js';
 
 test('RAS profile discovery matches modem metadata without guessing profile names', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ras-profile-'));

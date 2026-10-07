@@ -7,7 +7,7 @@ import { createSmsCodec } from '../../domain/services/sms-codec.js';
 import { ModemDiscovery } from '../../application/modem-discovery.js';
 import { createTraceRecorder } from '../serial/trace-recorder.js';
 import type { ModemProfile } from '../../domain/ports/modem-profile.js';
-import type { WindowsModem } from '../windows/modem-provider.js';
+import type { PlatformModem } from '../platform/modem-provider.js';
 
 export interface LifecycleStatus {
   connected: boolean;
@@ -39,7 +39,7 @@ export class ModemLifecycle {
     private trace?: { enabled: boolean; path: string },
     private profile?: ModemProfile,
     private readonly interaction?: InteractionRecorder,
-    private readonly windowsModems?: () => Promise<WindowsModem[]>,
+    private readonly platformModems?: () => Promise<PlatformModem[]>,
     private readonly onStatusChange?: () => void,
     private readonly findTransport?: () => Promise<SerialTransportPort>,
   ) {}
@@ -129,7 +129,7 @@ export class ModemLifecycle {
             vendorId: item.vendorId,
             productId: item.productId,
           }));
-          const providerPorts = (await (this.windowsModems?.() ?? Promise.resolve([])))
+          const providerPorts = (await (this.platformModems?.() ?? Promise.resolve([])))
             .filter((item) => item.status === 'OK' && item.attachedTo)
             .map((item) => ({
               path: item.attachedTo as string,
