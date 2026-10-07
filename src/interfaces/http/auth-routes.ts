@@ -14,7 +14,8 @@ import type { ApiBody } from './api-router.js';
 
 const CRED_FILE = (root: string) => path.join(root, 'data', 'credentials.json');
 const PROFILE_FILE = (root: string) => path.join(root, 'data', 'profile.json');
-const RECOVERY_FILE = (root: string) => path.join(root, 'data', 'recovery.json');
+/** In-memory-only pending OTP — never serialized to disk. */
+const pendingOtp = new Map<string, { otp: string; ts: number; tries: number }>();
 
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
@@ -191,21 +192,18 @@ export function createAuthRoutes({
       if (!stored.recovery || !sendSms)
         throw Object.assign(new Error('recovery number not configured'), { statusCode: 404 });
       const otp = String(Math.floor(100000 + Math.random() * 900000));
-      fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
-      fs.writeFileSync(RECOVERY_FILE(rootDir), JSON.stringify({ otp, ts: Date.now(), tries: 0 }), {
-        mode: 0o600,
-      });
+      pendingOtp.set('otp', { otp, ts: Date.now(), tries: 0 });
       await sendSms(stored.recovery, `ModemDeck recovery code: ${otp}. Expires in 10 minutes.`);
       return { ok: true, to: stored.recovery.replace(/\d(?=\d{2})/g, '*') };
     },
     'POST /api/auth/recover/verify': async (body) => {
-      if (!fs.existsSync(CRED_FILE(rootDir)) || !fs.existsSync(RECOVERY_FILE(rootDir)))
-        throw Object.assign(new Error('no recovery pending'), { statusCode: 404 });
-      const rec = JSON.parse(fs.readFileSync(RECOVERY_FILE(rootDir), 'utf8')) as {
-        otp: string;
-        ts: number;
-        tries: number;
+      const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
+        simId?: string;
+        recovery?: string;
       };
+      const rec = pendingOtp.get('otp');
+      if (!rec || !fs.existsSync(CRED_FILE(rootDir)))
+        throw Object.assign(new Error('no recovery pending'), { statusCode: 404 });
       const tries = (rec.tries || 0) + 1;
       const fresh = Date.now() - rec.ts < 10 * 60 * 1000;
       const newPassword = body.password;
@@ -213,12 +211,8 @@ export function createAuthRoutes({
       if (tries > 5) throw Object.assign(new Error('too many attempts'), { statusCode: 429 });
       if (!okPassword(newPassword))
         throw Object.assign(new Error('invalid new password'), { statusCode: 400 });
-      const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
-        simId?: string;
-        recovery?: string;
-      };
       if (String(body.otp || '') !== rec.otp) {
-        fs.writeFileSync(RECOVERY_FILE(rootDir), JSON.stringify({ ...rec, tries }));
+        pendingOtp.set('otp', { ...rec, tries });
         throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
       }
       const salt = randomBytes(16);
@@ -240,7 +234,7 @@ export function createAuthRoutes({
       dbClear(repository);
       repository.lock?.();
       lockSession();
-      fs.rmSync(RECOVERY_FILE(rootDir), { force: true });
+      pendingOtp.delete('otp');
       unlockSession(dataKey);
       repository.unlock?.(dataKey);
       return {
