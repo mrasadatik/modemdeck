@@ -24,7 +24,7 @@ import { simScopedState } from '../application/sim-visibility.js';
 import { createAuthRoutes } from '../interfaces/http/auth-routes.js';
 import { sessionKeyOrNull, lockSession, sessionStartAt } from './session.js';
 import { osUnprotect } from '../infrastructure/crypto/vault.js';
-import { createWindowsProvider } from '../infrastructure/platform/providers.js';
+import { createDefaultProvider } from '../infrastructure/platform/registry.js';
 import { DataTransportSelector } from '../application/data-transport-selector.js';
 import { saveConfig, validateConfig } from '../infrastructure/config/config.js';
 
@@ -102,7 +102,7 @@ const run = (file: string, args: string[]): Promise<{ ok: boolean; out: string }
       resolve({ ok: !error, out: String(stdout || stderr || error?.message || '') }),
     ),
   );
-const provider = createWindowsProvider(run);
+const provider = createDefaultProvider(run);
 const dialup = new DialupAdapter(config.dialup, run, () => provider.discoverDialupProfiles());
 const dataTransports = new DataTransportSelector(() => provider.discoverDataTransports());
 const dataState = async (): Promise<Record<string, unknown>> => {
