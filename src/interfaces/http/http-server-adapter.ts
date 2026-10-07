@@ -1,7 +1,9 @@
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import selfsigned from 'selfsigned';
 import type { ApiBody, ApiRoutes } from './api-router.js';
 import { createApiRouter } from './api-router.js';
 import type { SseHub } from './sse-hub.js';
@@ -12,14 +14,21 @@ export interface HttpAdapterOptions {
   token?: string;
   routes: ApiRoutes;
   sse: SseHub;
+  https?: boolean;
 }
 export class HttpServerAdapter {
-  private readonly server: http.Server;
+  private readonly server: http.Server | https.Server;
   private readonly counts = new Map<string, { count: number; reset: number }>();
   private lock = Promise.resolve();
   constructor(private readonly options: HttpAdapterOptions) {
     const dispatch = createApiRouter(options.routes);
-    this.server = http.createServer(async (req, res) => {
+    const server: http.Server | https.Server = options.https
+      ? https.createServer(
+          selfsigned.generate([{ name: 'commonName', value: 'localhost' }]) as never,
+        )
+      : http.createServer();
+    this.server = server;
+    server.on('request', async (req, res) => {
       const id = this.correlation(req);
       const json = (code: number, value: unknown): void => {
         res.writeHead(code, {

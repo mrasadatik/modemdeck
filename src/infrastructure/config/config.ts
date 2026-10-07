@@ -35,11 +35,20 @@ export function validateConfig(config: ModemConfig): ModemConfig {
     throw new Error('MODEMDECK_CAPTURE_PATH is invalid');
   if (config.logPayloads !== undefined && typeof config.logPayloads !== 'boolean')
     throw new Error('MODEMDECK_LOG_PAYLOADS is invalid');
+  if (config.https !== undefined && typeof config.https !== 'boolean')
+    throw new Error('MODEMDECK_HTTPS is invalid');
   if (
     config.lockMinutes !== undefined &&
     (!Number.isInteger(config.lockMinutes) || config.lockMinutes < 0 || config.lockMinutes > 1440)
   )
     throw new Error('MODEMDECK_LOCK_MINUTES is invalid');
+  if (
+    config.sessionMaxMinutes !== undefined &&
+    (!Number.isInteger(config.sessionMaxMinutes) ||
+      config.sessionMaxMinutes < 0 ||
+      config.sessionMaxMinutes > 10080)
+  )
+    throw new Error('MODEMDECK_SESSION_MAX_MINUTES is invalid');
   return config;
 }
 
@@ -79,6 +88,7 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
     capturePath: path.join(rootDir, 'data', 'traces', 'live.ndjson'),
     logPayloads: false,
     lockMinutes: 0,
+    sessionMaxMinutes: 480,
     ...fileConfig,
   };
   const overrides: Partial<ModemConfig> = {};
@@ -100,6 +110,9 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
     overrides.logPayloads = env.MODEMDECK_LOG_PAYLOADS === 'true';
   if (env.MODEMDECK_LOCK_MINUTES !== undefined)
     overrides.lockMinutes = Number(env.MODEMDECK_LOCK_MINUTES);
+  if (env.MODEMDECK_HTTPS !== undefined) overrides.https = env.MODEMDECK_HTTPS === 'true';
+  if (env.MODEMDECK_SESSION_MAX_MINUTES !== undefined)
+    overrides.sessionMaxMinutes = Number(env.MODEMDECK_SESSION_MAX_MINUTES);
   Object.assign(result, overrides);
   return validateConfig(result);
 }

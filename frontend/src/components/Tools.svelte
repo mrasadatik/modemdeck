@@ -16,6 +16,7 @@
     profile = 'generic-standards',
     capturePath = '',
     lockMinutes = 0,
+    sessionMaxMinutes = 480,
     captureRaw = false;
   async function refresh(): Promise<void> {
     try {
@@ -55,6 +56,7 @@
     profile = String(configuration.profile || 'generic-standards');
     capturePath = String(configuration.capturePath || '');
     lockMinutes = Number(configuration.lockMinutes) || 0;
+    sessionMaxMinutes = Number(configuration.sessionMaxMinutes) || 480;
     captureRaw = configuration.captureRaw === true;
   }
   async function save(): Promise<void> {
@@ -67,6 +69,7 @@
         captureRaw,
         capturePath,
         lockMinutes,
+        sessionMaxMinutes,
       });
       notify(
         result.hotReloaded ? 'Configuration saved and modem reconnected' : 'Configuration saved',
@@ -166,6 +169,16 @@
         <label class="span-4"
           ><div class="label">Auto-lock (minutes, 0=off)</div>
           <input class="input" type="number" bind:value={lockMinutes} min="0" max="1440" /></label
+        >
+        <label class="span-4"
+          ><div class="label">Session max (minutes)</div>
+          <input
+            class="input"
+            type="number"
+            bind:value={sessionMaxMinutes}
+            min="0"
+            max="10080"
+          /></label
         >
       </div>
       <label class="row"

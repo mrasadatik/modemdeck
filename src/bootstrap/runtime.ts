@@ -20,7 +20,8 @@ import type { UssdResult } from '../domain/entities/types.js';
 import { createProfileRegistry } from '../infrastructure/modem/profiles.js';
 import { simScopedState } from '../application/sim-visibility.js';
 import { createAuthRoutes } from '../interfaces/http/auth-routes.js';
-import { sessionKeyOrNull, lockSession } from './session.js';
+import { sessionKeyOrNull, lockSession, sessionStartAt } from './session.js';
+import { osUnprotect } from '../infrastructure/crypto/vault.js';
 import { discoverMatchingRasProfiles } from '../infrastructure/windows/ras-profile-discovery.js';
 import { listWindowsModems } from '../infrastructure/windows/modem-provider.js';
 import { discoverWindowsDataTransports } from '../infrastructure/windows/data-transport-discovery.js';
@@ -53,8 +54,16 @@ const syncSimIdentity = async (): Promise<void> => {
   try {
     const credsFile = `${process.cwd()}/data/credentials.json`;
     if (activeSimId && fs.existsSync(credsFile)) {
-      const stored = JSON.parse(fs.readFileSync(credsFile, 'utf8')) as { simId?: string };
-      if (stored.simId && stored.simId !== activeSimId && sessionKeyOrNull()) {
+      const stored = JSON.parse(fs.readFileSync(credsFile, 'utf8')) as {
+        simId?: string;
+        osVersion?: number;
+        simId_os?: string;
+      };
+      const storedSimId =
+        stored.osVersion === 3 && stored.simId_os
+          ? (osUnprotect(stored.simId_os)?.toString('utf8') ?? stored.simId ?? '')
+          : (stored.simId ?? '');
+      if (storedSimId && storedSimId !== activeSimId && sessionKeyOrNull()) {
         lockSession();
         repository.lock?.();
         activeSimId = '';
@@ -155,6 +164,8 @@ const publicConfig = (): Record<string, unknown> => ({
   persistSensitive: config.persistSensitive,
   logPayloads: config.logPayloads,
   lockMinutes: config.lockMinutes,
+  sessionMaxMinutes: config.sessionMaxMinutes,
+  https: config.https === true,
   authConfigured: Boolean(config.authToken),
   restartOnly: [
     'http',
@@ -223,6 +234,7 @@ const routes = createModemRoutes({
       'captureRaw',
       'capturePath',
       'lockMinutes',
+      'sessionMaxMinutes',
     ] as const;
     for (const key of editable) {
       const value = body[key];
@@ -234,7 +246,12 @@ const routes = createModemRoutes({
             ? typeof value === 'boolean'
             : key === 'lockMinutes'
               ? typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1440
-              : typeof value === 'string';
+              : key === 'sessionMaxMinutes'
+                ? typeof value === 'number' &&
+                  Number.isInteger(value) &&
+                  value >= 0 &&
+                  value <= 10080
+                : typeof value === 'string';
       if (!valid) throw Object.assign(new Error(`${key} has an invalid type`), { statusCode: 400 });
       (next[key] as never) = value as never;
     }
@@ -318,12 +335,26 @@ for (const [key, handler] of Object.entries(routes)) {
 }
 setInterval(() => {
   const minutes = Number(config.lockMinutes) || 0;
+  const sessionMax = Number(config.sessionMaxMinutes) || 0;
   if (minutes > 0 && sessionKeyOrNull() && Date.now() - lastActivity > minutes * 60_000) {
     lockSession();
     repository.lock?.();
     status.error = 'Auto-locked after inactivity';
     emit('status', status);
     emit('locked', { reason: 'inactivity' });
+    return;
+  }
+  if (
+    sessionMax > 0 &&
+    sessionKeyOrNull() &&
+    sessionStartAt() > 0 &&
+    Date.now() - sessionStartAt() > sessionMax * 60_000
+  ) {
+    lockSession();
+    repository.lock?.();
+    status.error = 'Session expired — unlock again';
+    emit('status', status);
+    emit('locked', { reason: 'session-max' });
   }
 }, 5000).unref();
 const server = new HttpServerAdapter({
@@ -332,6 +363,7 @@ const server = new HttpServerAdapter({
   token: config.authToken,
   routes,
   sse,
+  https: config.https === true,
 });
 async function start(): Promise<void> {
   await server.start();

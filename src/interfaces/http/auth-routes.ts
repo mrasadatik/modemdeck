@@ -18,9 +18,31 @@ const CRED_FILE = (root: string) => path.join(root, 'data', 'credentials.json');
 const PROFILE_FILE = (root: string) => path.join(root, 'data', 'profile.json');
 /** In-memory-only pending OTP — never serialized to disk. */
 const pendingOtp = new Map<string, { otp: string; ts: number; tries: number }>();
+let failedLogins: number[] = [];
 
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
+
+/** Decrypt the simId/recovery metadata if the file uses DPAPI-wrapped fields. */
+function readMeta(stored: {
+  osVersion?: number;
+  recovery?: string;
+  simId?: string;
+  recovery_os?: string;
+  simId_os?: string;
+}): { recovery: string; simId: string } {
+  if (stored.osVersion === 3) {
+    return {
+      recovery: stored.recovery_os
+        ? (osUnprotect(stored.recovery_os)?.toString('utf8') ?? stored.recovery ?? '')
+        : (stored.recovery ?? ''),
+      simId: stored.simId_os
+        ? (osUnprotect(stored.simId_os)?.toString('utf8') ?? stored.simId ?? '')
+        : (stored.simId ?? ''),
+    };
+  }
+  return { recovery: stored.recovery ?? '', simId: stored.simId ?? '' };
+}
 
 /** Encrypted-at-rest onboarding, login, and lock control endpoints. */
 export function createAuthRoutes({
@@ -71,22 +93,36 @@ export function createAuthRoutes({
         .join('-');
       const pwKey = deriveKey(password, salt);
       const osWrapped = osProtect(dataKey);
+      const storedRecovery =
+        typeof body.recovery === 'string' ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20) : '';
       fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
       fs.writeFileSync(
         CRED_FILE(rootDir),
         JSON.stringify({
           version: 2,
-          simId: activeSimId() || '',
+          simId: osWrapped ? '' : activeSimId() || '',
           recovery:
-            typeof body.recovery === 'string'
-              ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
-              : '',
+            osWrapped || typeof body.recovery !== 'string'
+              ? ''
+              : body.recovery.replace(/[^\d+]/g, '').slice(0, 20),
           salt: salt.toString('base64'),
           verify: verifyHash(password, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
           wrapPhrase: encryptText(deriveKey(phrase, salt), dataKey.toString('base64')),
           osProtected: osWrapped ?? '',
           osVersion: osWrapped ? 3 : 2,
+          ...(osWrapped
+            ? {
+                recovery_os: osProtect(Buffer.from(storedRecovery, 'utf8')) ?? '',
+                simId_os: osProtect(Buffer.from(activeSimId() || '', 'utf8')) ?? '',
+              }
+            : {
+                recovery:
+                  typeof body.recovery === 'string'
+                    ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
+                    : '',
+                simId: activeSimId() || '',
+              }),
         }),
         { mode: 0o600 },
       );
@@ -110,6 +146,12 @@ export function createAuthRoutes({
       const password = body.password;
       if (!okPassword(password))
         throw Object.assign(new Error('invalid password'), { statusCode: 400 });
+      const now = Date.now();
+      failedLogins = failedLogins.filter((t) => now - t < 15 * 60_000);
+      if (failedLogins.length >= 5)
+        throw Object.assign(new Error('too many login attempts, wait 15 minutes'), {
+          statusCode: 429,
+        });
       if (!fs.existsSync(CRED_FILE(rootDir)))
         throw Object.assign(new Error('no profile configured'), { statusCode: 404 });
       const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
@@ -120,14 +162,24 @@ export function createAuthRoutes({
         wrapData?: string;
         osProtected?: string;
         osVersion?: number;
+        simId_os?: string;
+        recovery_os?: string;
       };
       const salt = Buffer.from(stored.salt, 'base64');
       const keyMaterial = deriveKey(password, salt);
       if (
         Buffer.from(stored.verify, 'base64').toString('base64') !==
         verifyHash(password, salt).toString('base64')
-      )
+      ) {
+        failedLogins.push(now);
         throw Object.assign(new Error('wrong password'), { statusCode: 401 });
+      }
+      failedLogins = [];
+      const meta = readMeta(stored);
+      if (meta.simId && activeSimId() && meta.simId !== activeSimId())
+        throw Object.assign(new Error('SIM mismatch: this profile belongs to a different SIM'), {
+          statusCode: 403,
+        });
       if (stored.version === 1 && stored.simId && activeSimId() && stored.simId !== activeSimId())
         throw Object.assign(new Error('SIM mismatch: this profile belongs to a different SIM'), {
           statusCode: 403,
@@ -161,6 +213,8 @@ export function createAuthRoutes({
         wrapPhrase?: string;
         osProtected?: string;
         osVersion?: number;
+        simId_os?: string;
+        recovery_os?: string;
       };
       if (!stored.wrapPhrase)
         throw Object.assign(new Error('recovery phrase not available for this profile'), {
@@ -180,14 +234,17 @@ export function createAuthRoutes({
         CRED_FILE(rootDir),
         JSON.stringify({
           version: 2,
-          simId: stored.simId || '',
-          recovery: stored.recovery || '',
+          simId: readMeta(stored).simId,
+          recovery: readMeta(stored).recovery,
           salt: salt.toString('base64'),
           verify: verifyHash(newPassword, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
           wrapPhrase: stored.wrapPhrase,
           osProtected: stored.osProtected ?? '',
           osVersion: stored.osVersion ?? 2,
+          ...(stored.osVersion === 3
+            ? { simId_os: stored.simId_os ?? '', recovery_os: stored.recovery_os ?? '' }
+            : {}),
         }),
         { mode: 0o600 },
       );
@@ -203,31 +260,38 @@ export function createAuthRoutes({
         throw Object.assign(new Error('no profile configured'), { statusCode: 404 });
       const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
         recovery?: string;
+        osVersion?: number;
+        recovery_os?: string;
       };
-      if (!stored.recovery || !sendSms)
+      const rec = readMeta(stored);
+      if (!rec.recovery || !sendSms)
         throw Object.assign(new Error('recovery number not configured'), { statusCode: 404 });
       const otp = String(Math.floor(100000 + Math.random() * 900000));
       pendingOtp.set('otp', { otp, ts: Date.now(), tries: 0 });
-      await sendSms(stored.recovery, `ModemDeck recovery code: ${otp}. Expires in 10 minutes.`);
-      return { ok: true, to: stored.recovery.replace(/\d(?=\d{2})/g, '*') };
+      await sendSms(rec.recovery, `ModemDeck recovery code: ${otp}. Expires in 10 minutes.`);
+      return { ok: true, to: rec.recovery.replace(/\d(?=\d{2})/g, '*') };
     },
     'POST /api/auth/recover/verify': async (body) => {
       const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
         simId?: string;
         recovery?: string;
+        osVersion?: number;
+        simId_os?: string;
+        recovery_os?: string;
       };
-      const rec = pendingOtp.get('otp');
-      if (!rec || !fs.existsSync(CRED_FILE(rootDir)))
+      const rec = readMeta(stored);
+      const recObj = pendingOtp.get('otp');
+      if (!recObj || !fs.existsSync(CRED_FILE(rootDir)))
         throw Object.assign(new Error('no recovery pending'), { statusCode: 404 });
-      const tries = (rec.tries || 0) + 1;
-      const fresh = Date.now() - rec.ts < 10 * 60 * 1000;
+      const tries = (recObj.tries || 0) + 1;
+      const fresh = Date.now() - recObj.ts < 10 * 60 * 1000;
       const newPassword = body.password;
       if (!fresh) throw Object.assign(new Error('OTP expired'), { statusCode: 410 });
       if (tries > 5) throw Object.assign(new Error('too many attempts'), { statusCode: 429 });
       if (!okPassword(newPassword))
         throw Object.assign(new Error('invalid new password'), { statusCode: 400 });
-      if (String(body.otp || '') !== rec.otp) {
-        pendingOtp.set('otp', { ...rec, tries });
+      if (String(body.otp || '') !== recObj.otp) {
+        pendingOtp.set('otp', { ...recObj, tries });
         throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
       }
       const salt = randomBytes(16);
@@ -237,14 +301,20 @@ export function createAuthRoutes({
         CRED_FILE(rootDir),
         JSON.stringify({
           version: 2,
-          simId: stored.simId || '',
-          recovery: stored.recovery || '',
+          simId: osWrapped ? '' : rec.simId,
+          recovery: osWrapped ? '' : rec.recovery,
           salt: salt.toString('base64'),
           verify: verifyHash(newPassword, salt).toString('base64'),
           wrapData: '',
           wrapPhrase: '',
           osProtected: osWrapped ?? '',
           osVersion: osWrapped ? 3 : 2,
+          ...(osWrapped
+            ? {
+                recovery_os: osProtect(Buffer.from(rec.recovery, 'utf8')) ?? '',
+                simId_os: osProtect(Buffer.from(rec.simId, 'utf8')) ?? '',
+              }
+            : {}),
         }),
         { mode: 0o600 },
       );

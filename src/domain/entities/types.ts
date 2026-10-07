@@ -56,6 +56,7 @@ export interface ModemConfig {
   dialup: string;
   baud: number;
   authToken?: string;
+  https?: boolean;
   dataPath?: string;
   persistSensitive?: boolean;
   retentionDays?: number;
@@ -64,6 +65,7 @@ export interface ModemConfig {
   capturePath?: string;
   logPayloads?: boolean;
   lockMinutes?: number;
+  sessionMaxMinutes?: number;
 }
 export interface ModemCapabilities {
   sms: boolean;
