@@ -33,6 +33,10 @@ const db = repository.state;
 const sse = new SseHub();
 const emit = (event: string, value: unknown): void => sse.publish(event, value);
 let activeSimId = '';
+let lastActivity = Date.now();
+const touchActivity = (): void => {
+  lastActivity = Date.now();
+};
 const syncSimIdentity = async (): Promise<void> => {
   if (!status.connected) {
     activeSimId = '';
@@ -147,6 +151,7 @@ const publicConfig = (): Record<string, unknown> => ({
   retentionDays: config.retentionDays,
   persistSensitive: config.persistSensitive,
   logPayloads: config.logPayloads,
+  lockMinutes: config.lockMinutes,
   authConfigured: Boolean(config.authToken),
   restartOnly: [
     'http',
@@ -207,7 +212,15 @@ const routes = createModemRoutes({
   getSimId: () => activeSimId || undefined,
   updateConfig: async (body) => {
     const next = { ...config };
-    const editable = ['port', 'baud', 'dialup', 'profile', 'captureRaw', 'capturePath'] as const;
+    const editable = [
+      'port',
+      'baud',
+      'dialup',
+      'profile',
+      'captureRaw',
+      'capturePath',
+      'lockMinutes',
+    ] as const;
     for (const key of editable) {
       const value = body[key];
       if (value === undefined) continue;
@@ -216,7 +229,9 @@ const routes = createModemRoutes({
           ? typeof value === 'number' && Number.isInteger(value)
           : key === 'captureRaw'
             ? typeof value === 'boolean'
-            : typeof value === 'string';
+            : key === 'lockMinutes'
+              ? typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1440
+              : typeof value === 'string';
       if (!valid) throw Object.assign(new Error(`${key} has an invalid type`), { statusCode: 400 });
       (next[key] as never) = value as never;
     }
@@ -290,15 +305,24 @@ const allowedUnauthenticated = new Set([
   ...Object.keys(auth),
 ]);
 for (const [key, handler] of Object.entries(routes)) {
-  if (!allowedUnauthenticated.has(key)) {
-    const protectedHandler = handler;
-    routes[key] = async (body, params) => {
-      if (!sessionKeyOrNull())
-        throw Object.assign(new Error('profile is locked — unlock first'), { statusCode: 423 });
-      return protectedHandler(body, params);
-    };
-  }
+  const original = handler;
+  routes[key] = async (body, params) => {
+    touchActivity();
+    if (!allowedUnauthenticated.has(key) && !sessionKeyOrNull())
+      throw Object.assign(new Error('profile is locked — unlock first'), { statusCode: 423 });
+    return original(body, params);
+  };
 }
+setInterval(() => {
+  const minutes = Number(config.lockMinutes) || 0;
+  if (minutes > 0 && sessionKeyOrNull() && Date.now() - lastActivity > minutes * 60_000) {
+    lockSession();
+    repository.lock?.();
+    status.error = 'Auto-locked after inactivity';
+    emit('status', status);
+    emit('locked', { reason: 'inactivity' });
+  }
+}, 5000).unref();
 const server = new HttpServerAdapter({
   port: config.http,
   rootDir: process.cwd(),

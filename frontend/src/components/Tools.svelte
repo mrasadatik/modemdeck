@@ -15,6 +15,7 @@
     dialup = '',
     profile = 'generic-standards',
     capturePath = '',
+    lockMinutes = 0,
     captureRaw = false;
   async function refresh(): Promise<void> {
     try {
@@ -53,6 +54,7 @@
     dialup = String(configuration.dialup || '');
     profile = String(configuration.profile || 'generic-standards');
     capturePath = String(configuration.capturePath || '');
+    lockMinutes = Number(configuration.lockMinutes) || 0;
     captureRaw = configuration.captureRaw === true;
   }
   async function save(): Promise<void> {
@@ -64,6 +66,7 @@
         profile,
         captureRaw,
         capturePath,
+        lockMinutes,
       });
       notify(
         result.hotReloaded ? 'Configuration saved and modem reconnected' : 'Configuration saved',
@@ -159,6 +162,10 @@
             bind:value={capturePath}
             placeholder="data/traces/live.ndjson"
           /></label
+        >
+        <label class="span-4"
+          ><div class="label">Auto-lock (minutes, 0=off)</div>
+          <input class="input" type="number" bind:value={lockMinutes} min="0" max="1440" /></label
         >
       </div>
       <label class="row"

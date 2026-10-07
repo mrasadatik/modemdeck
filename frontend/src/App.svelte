@@ -81,6 +81,14 @@
   function open(view: string): void {
     activeView.set(view);
   }
+  async function manualLock(): Promise<void> {
+    try {
+      await api('auth/logout', {});
+    } catch {
+      /* ignore */
+    }
+    locked = true;
+  }
   onMount(() => {
     void checkAuth();
     void refresh();
@@ -93,6 +101,7 @@
     });
     events.addEventListener('sms', () => void refresh());
     events.addEventListener('call', () => void refresh());
+    events.addEventListener('locked', () => (locked = true));
     return () => events.close();
   });
 </script>
@@ -124,7 +133,7 @@
   <div class="app">
     <Sidebar {items} />
     <div class="content">
-      <Topbar {labels} {refresh} />
+      <Topbar {labels} {refresh} onLock={manualLock} />
       <main class="main" id="main">
         {#if $activeView === 'overview'}<Dashboard {state} {open} />
         {:else if ['inbox', 'send', 'ussd'].includes($activeView)}<Messages

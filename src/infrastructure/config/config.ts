@@ -35,6 +35,11 @@ export function validateConfig(config: ModemConfig): ModemConfig {
     throw new Error('MODEMDECK_CAPTURE_PATH is invalid');
   if (config.logPayloads !== undefined && typeof config.logPayloads !== 'boolean')
     throw new Error('MODEMDECK_LOG_PAYLOADS is invalid');
+  if (
+    config.lockMinutes !== undefined &&
+    (!Number.isInteger(config.lockMinutes) || config.lockMinutes < 0 || config.lockMinutes > 1440)
+  )
+    throw new Error('MODEMDECK_LOCK_MINUTES is invalid');
   return config;
 }
 
@@ -73,6 +78,7 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
     captureRaw: false,
     capturePath: path.join(rootDir, 'data', 'traces', 'live.ndjson'),
     logPayloads: false,
+    lockMinutes: 0,
     ...fileConfig,
   };
   const overrides: Partial<ModemConfig> = {};
@@ -92,6 +98,8 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
   if (env.MODEMDECK_CAPTURE_PATH !== undefined) overrides.capturePath = env.MODEMDECK_CAPTURE_PATH;
   if (env.MODEMDECK_LOG_PAYLOADS !== undefined)
     overrides.logPayloads = env.MODEMDECK_LOG_PAYLOADS === 'true';
+  if (env.MODEMDECK_LOCK_MINUTES !== undefined)
+    overrides.lockMinutes = Number(env.MODEMDECK_LOCK_MINUTES);
   Object.assign(result, overrides);
   return validateConfig(result);
 }

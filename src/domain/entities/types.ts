@@ -62,6 +62,7 @@ export interface ModemConfig {
   captureRaw?: boolean;
   capturePath?: string;
   logPayloads?: boolean;
+  lockMinutes?: number;
 }
 export interface ModemCapabilities {
   sms: boolean;
