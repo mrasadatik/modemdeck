@@ -72,8 +72,11 @@ export class ModemLifecycle {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.engine?.disconnect(new Error('modem reconfiguring'));
-    this.transport?.removeAllListeners();
-    this.transport?.close();
+    try {
+      this.transport?.close();
+    } catch {
+      /* ignore */
+    }
     this.transport = null;
     this.engine = null;
     this.service = null;
@@ -91,8 +94,11 @@ export class ModemLifecycle {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.engine?.disconnect(new Error('server shutting down'));
-    this.transport?.removeAllListeners();
-    this.transport?.close();
+    try {
+      this.transport?.close();
+    } catch {
+      /* ignore */
+    }
     this.transport = null;
     this.engine = null;
     this.service = null;
@@ -213,8 +219,11 @@ export class ModemLifecycle {
       if (!this.stopping) {
         const error = reason instanceof Error ? reason.message : String(reason);
         this.engine?.disconnect(reason instanceof Error ? reason : new Error(error));
-        this.transport?.removeAllListeners();
-        if (this.transport?.isOpen) this.transport.close();
+        try {
+          if (this.transport?.isOpen) this.transport.close();
+        } catch {
+          /* ignore */
+        }
         this.transport = null;
         this.engine = null;
         this.service = null;
@@ -228,7 +237,11 @@ export class ModemLifecycle {
   private lost(): void {
     if (!this.transport || this.stopping) return;
     this.engine?.disconnect();
-    this.transport.removeAllListeners();
+    try {
+      this.transport.close();
+    } catch {
+      /* ignore */
+    }
     this.transport = null;
     this.engine = null;
     this.service = null;
