@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import {
   deriveKey,
   decryptText,
@@ -60,13 +61,17 @@ export function createAuthRoutes({
         throw Object.assign(new Error('name, simLabel and gender are required'), {
           statusCode: 400,
         });
-      const salt = (await import('node:crypto')).randomBytes(16);
-      const key = deriveKey(password, salt);
+      const salt = randomBytes(16);
+      const dataKey = randomBytes(32);
+      const phrase = Array.from(randomBytes(16))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('-');
+      const pwKey = deriveKey(password, salt);
       fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
       fs.writeFileSync(
         CRED_FILE(rootDir),
         JSON.stringify({
-          version: 1,
+          version: 2,
           simId: activeSimId() || '',
           recovery:
             typeof body.recovery === 'string'
@@ -74,20 +79,26 @@ export function createAuthRoutes({
               : '',
           salt: salt.toString('base64'),
           verify: verifyHash(password, salt).toString('base64'),
+          wrapData: encryptText(pwKey, dataKey.toString('base64')),
+          wrapPhrase: encryptText(deriveKey(phrase, salt), dataKey.toString('base64')),
         }),
         { mode: 0o600 },
       );
       fs.writeFileSync(
         PROFILE_FILE(rootDir),
         encryptText(
-          key,
+          dataKey,
           JSON.stringify({ name, gender, simLabel, number, image, simId: activeSimId() || '' }),
         ),
         { mode: 0o600 },
       );
-      unlockSession(key);
-      repository.unlock?.(key);
-      return { ok: true, profile: { name, gender, simLabel, number, image } };
+      unlockSession(dataKey);
+      repository.unlock?.(dataKey);
+      return {
+        ok: true,
+        recoveryPhrase: phrase,
+        profile: { name, gender, simLabel, number, image },
+      };
     },
     'POST /api/auth/login': async (body) => {
       const password = body.password;
@@ -100,9 +111,10 @@ export function createAuthRoutes({
         verify: string;
         version?: number;
         simId?: string;
+        wrapData?: string;
       };
       const salt = Buffer.from(stored.salt, 'base64');
-      const key = deriveKey(password, salt);
+      const keyMaterial = deriveKey(password, salt);
       if (
         Buffer.from(stored.verify, 'base64').toString('base64') !==
         verifyHash(password, salt).toString('base64')
@@ -112,14 +124,63 @@ export function createAuthRoutes({
         throw Object.assign(new Error('SIM mismatch: this profile belongs to a different SIM'), {
           statusCode: 403,
         });
-      unlockSession(key);
-      repository.unlock?.(key);
+      const dataKey =
+        stored.version === 2 && stored.wrapData
+          ? Buffer.from(decryptText(keyMaterial, stored.wrapData) ?? '', 'base64')
+          : keyMaterial;
+      unlockSession(dataKey.length === 32 ? dataKey : keyMaterial);
+      repository.unlock?.(dataKey.length === 32 ? dataKey : keyMaterial);
       return { ok: true };
     },
     'POST /api/auth/logout': async () => {
       lockSession();
       repository.lock?.();
       return { ok: true };
+    },
+    'POST /api/auth/recover/phrase': async (body) => {
+      if (!fs.existsSync(CRED_FILE(rootDir)))
+        throw Object.assign(new Error('no profile configured'), { statusCode: 404 });
+      const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
+        salt: string;
+        version?: number;
+        simId?: string;
+        recovery?: string;
+        wrapData?: string;
+        wrapPhrase?: string;
+      };
+      if (stored.version !== 2 || !stored.wrapPhrase)
+        throw Object.assign(new Error('recovery phrase not available for this profile'), {
+          statusCode: 404,
+        });
+      const newPassword = body.password;
+      const phrase = body.phrase;
+      if (!okPassword(newPassword) || typeof phrase !== 'string' || !phrase.trim())
+        throw Object.assign(new Error('phrase and new password required'), { statusCode: 400 });
+      const salt = Buffer.from(stored.salt, 'base64');
+      const plainWrapped = decryptText(deriveKey(phrase.trim(), salt), stored.wrapPhrase);
+      if (!plainWrapped)
+        throw Object.assign(new Error('wrong recovery phrase'), { statusCode: 401 });
+      const dataKey = Buffer.from(plainWrapped, 'base64');
+      const pwKey = deriveKey(newPassword, salt);
+      fs.writeFileSync(
+        CRED_FILE(rootDir),
+        JSON.stringify({
+          version: 2,
+          simId: stored.simId || '',
+          recovery: stored.recovery || '',
+          salt: salt.toString('base64'),
+          verify: verifyHash(newPassword, salt).toString('base64'),
+          wrapData: encryptText(pwKey, dataKey.toString('base64')),
+          wrapPhrase: stored.wrapPhrase,
+        }),
+        { mode: 0o600 },
+      );
+      if (stored.simId && activeSimId() && stored.simId !== activeSimId())
+        throw Object.assign(new Error('SIM mismatch'), { statusCode: 403 });
+      // Session key is the data key — in-memory state restores without wiping history.
+      unlockSession(dataKey);
+      repository.unlock?.(dataKey);
+      return { ok: true, preserved: true };
     },
     'POST /api/auth/recover/request': async () => {
       if (!fs.existsSync(CRED_FILE(rootDir)))
@@ -160,26 +221,28 @@ export function createAuthRoutes({
         fs.writeFileSync(RECOVERY_FILE(rootDir), JSON.stringify({ ...rec, tries }));
         throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
       }
-      const salt = (await import('node:crypto')).randomBytes(16);
-      const key = deriveKey(newPassword, salt);
+      const salt = randomBytes(16);
+      const dataKey = randomBytes(32);
+      const pwKey = deriveKey(newPassword, salt);
       fs.writeFileSync(
         CRED_FILE(rootDir),
         JSON.stringify({
-          version: 1,
+          version: 2,
           simId: stored.simId || '',
           recovery: stored.recovery || '',
           salt: salt.toString('base64'),
           verify: verifyHash(newPassword, salt).toString('base64'),
+          wrapData: encryptText(pwKey, dataKey.toString('base64')),
+          wrapPhrase: '',
         }),
         { mode: 0o600 },
       );
-      // Old encrypted rows are unrecoverable without the old key — wipe and re-init.
       dbClear(repository);
       repository.lock?.();
       lockSession();
       fs.rmSync(RECOVERY_FILE(rootDir), { force: true });
-      unlockSession(key);
-      repository.unlock?.(key);
+      unlockSession(dataKey);
+      repository.unlock?.(dataKey);
       return {
         ok: true,
         wiped: true,

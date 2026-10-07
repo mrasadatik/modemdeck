@@ -16,7 +16,9 @@
     otpSent = false,
     otp = '',
     newPassword = '',
-    confirmNew = '';
+    confirmNew = '',
+    phrase = '',
+    phraseResult = '';
   async function unlock(): Promise<void> {
     try {
       await api('auth/login', { password });
@@ -28,7 +30,19 @@
   async function create(): Promise<void> {
     if (password !== confirm) return notify('passwords do not match');
     try {
-      await api('auth/setup', { name, gender, simLabel, number, password, image, recovery });
+      const r = await api<{ recoveryPhrase?: string }>('auth/setup', {
+        name,
+        gender,
+        simLabel,
+        number,
+        password,
+        image,
+        recovery,
+      });
+      if (r.recoveryPhrase) {
+        phraseResult = `Write this down safely — it is the only way to recover without wiping data: ${r.recoveryPhrase}`;
+        alert(phraseResult);
+      }
       onUnlock();
     } catch (error) {
       notify((error as Error).message);
@@ -40,6 +54,21 @@
     const reader = new FileReader();
     reader.onload = () => (image = String(reader.result));
     reader.readAsDataURL(file);
+  }
+  async function confirmPhrase(): Promise<void> {
+    if (newPassword !== confirmNew) return notify('passwords do not match');
+    try {
+      const r = await api<{ preserved?: boolean }>('auth/recover/phrase', {
+        phrase,
+        password: newPassword,
+      });
+      notify(r.preserved ? 'Archive preserved — credential updated' : 'Credential updated');
+      forgotMode = false;
+      otpSent = false;
+      onUnlock();
+    } catch (error) {
+      notify((error as Error).message);
+    }
   }
   async function requestOtp(): Promise<void> {
     try {
@@ -80,9 +109,28 @@
         ><button class="button" on:click={unlock}>Unlock</button>
       </div>
     {:else if configured && forgotMode}
+      <div class="row between">
+        <button class="button secondary small" on:click={() => (forgotMode = false)}>Back</button>
+      </div>
+      <div class="label">Use recovery phrase</div>
+      <input class="input" bind:value={phrase} aria-label="Recovery phrase" />
+      <div class="label">New credential</div>
+      <input class="input" type="password" bind:value={newPassword} aria-label="New credential" />
+      <div class="label">Confirm new credential</div>
+      <input
+        class="input"
+        type="password"
+        bind:value={confirmNew}
+        aria-label="Confirm new credential"
+      />
+      <div class="row end">
+        <button class="button" on:click={confirmPhrase}>Recover with phrase</button>
+      </div>
+      <hr style="margin:24px 0" />
       <p class="subtle">
-        An OTP will be sent from your connected SIM to the recovery number set during onboarding.
-        Confirming it resets the credential; previously encrypted data is permanently removed.
+        Alternatively, an OTP can be sent from your connected SIM to the recovery number set at
+        onboarding. Confirming it resets the credential; previously encrypted data is permanently
+        removed.
       </p>
       {#if !otpSent}
         <div class="row end"><button class="button" on:click={requestOtp}>Send OTP</button></div>
