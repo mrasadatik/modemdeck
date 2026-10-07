@@ -1,14 +1,6 @@
 # ModemDeck
 
-Local-first web console ... — private, self-hosted, localhost-only. Windows is the only supported OS.
-
-Add real tested devices here. The template:
-
-| OS / CI platform                                                                                                                | Modem model | Firmware | SMS | USSD | Phonebook | Forwarding | Data dial-up | Call audio | Notes |
-| ------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | --- | ---- | --------- | ---------- | ------------ | ---------- | ----- |
-| _No physical modem tested on CI yet — populate from `npm run hardware:test -- COM3` output and `npm run compatibility:report`._ |             |          |     |      |           |            |              |            |       |
-
-Until you add a real device → we only confirm what the Windows AT probe can observe; the UI reports only live evidence.
+Local-first web console for USB AT-command modems: SMS, USSD, call log, phonebook, network & dial-up data — private, self-hosted, localhost-only. Runs on any OS with a serial-capable port; CI verifies on Windows.
 
 ## Features
 
@@ -17,7 +9,7 @@ Until you add a real device → we only confirm what the Windows AT probe can ob
 - **Calls** — incoming-call log with caller ID
 - **Phonebook** — read/write contacts (SIM & modem storage, UCS2 names)
 - **Network** — signal, operator, registration (CS/PS/EPS), IMEI, firmware, APN
-- **Dial-up data** — toggle the Windows dial-up profile, connect/disconnect from the UI
+- **Dial-up data** — toggle the OS dial-up profile, connect/disconnect from the UI (Windows RAS)
 - **Call forwarding** — view/set forwarding rules
 - **Raw AT console** — guarded interactive console
 - **Diagnostics** — modem capability probes, compatibility evidence, health/readiness endpoints
@@ -36,7 +28,7 @@ The modem is auto-detected across available serial ports with bounded probing. T
 { "port": "COM3", "http": 3000, "dialup": "My Dial-up Entry" }
 ```
 
-**Mobile data:** create a Windows dial-up connection once (Settings → Network → Dial-up, number `*99#`, using the modem), then set its name in `dialup`. Tip: pin the app to the Diagnostics/AT port (e.g. COM3) so it keeps working while the data connection holds the modem's data port.
+**Mobile data:** create the OS dial-up connection for your modem once (number `*99#`), then set its name in `dialup`. Tip: pin the app to the Diagnostics/AT port so it keeps working while the data connection holds the modem's data port.
 
 ## Configuration
 
@@ -47,7 +39,7 @@ Everything can be inspected and hot-reloaded from the **Capabilities → Runtime
 | `port`                       | `MODEMDECK_PORT`                                   | Serial port (empty = auto-detect)    |
 | `http`                       | `PORT`                                             | HTTP port (default 3000)             |
 | `baud`                       | `MODEMDECK_BAUD`                                   | Serial baud (default 115200)         |
-| `dialup`                     | `DIALUP`                                           | Windows dial-up profile name         |
+| `dialup`                     | `DIALUP`                                           | OS dial-up profile name              |
 | `authToken`                  | `MODEMDECK_AUTH_TOKEN`                             | Require `Authorization: Bearer …`    |
 | `dataPath`                   | `MODEMDECK_DATA_PATH`                              | SQLite path                          |
 | `retentionDays`              | `MODEMDECK_RETENTION_DAYS`                         | Default 90                           |
@@ -64,7 +56,7 @@ Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persis
 | ------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | --- | ---- | --------- | ---------- | ------------ | ---------- | ----- |
 | _No physical modem tested on CI yet — populate from `npm run hardware:test -- COM3` output and `npm run compatibility:report`._ |             |          |     |      |           |            |              |            |       |
 
-Until a real device is added, we only confirm what the Windows AT probe can observe; the UI reports only live evidence.
+Until a real device is added, we only confirm what the AT probe can observe; the UI reports only live evidence.
 
 ## Security & responsibility
 
@@ -83,7 +75,7 @@ The TypeScript source is layered so hardware and HTTP concerns stay at the edges
 
 - `src/domain` — modem entities, protocol/value logic, SMS codec, dependency-free ports
 - `src/application` — use-case services (SMS sending, serial discovery, dial-up selection)
-- `src/infrastructure` — serial transport, AT command queue, SQLite persistence, configuration, modem lifecycle, Windows RAS/provider integration
+- `src/infrastructure` — serial transport, AT command queue, SQLite persistence, configuration, modem lifecycle, OS dial-up / provider integration
 - `src/interfaces/http` — routing, HTTP adapter, SSE hub
 - `src/bootstrap` — composition root and runtime wiring (`server.ts` is a thin entrypoint)
 - `frontend/` — Svelte 5 + Vite UI, Catppuccin Mocha/Latte theme with Blue accents
