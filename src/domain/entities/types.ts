@@ -45,6 +45,7 @@ export interface ModemDatabase {
   sent: SentMessage[];
   calls: CallRecord[];
   ussd: Array<UssdResult & { code: string; ts: string }>;
+  contacts: Array<{ index: number; name: string; number: string; simId?: string }>;
   parts: Record<string, Record<number, string>>;
   seen: Record<string, number>;
 }

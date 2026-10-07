@@ -107,6 +107,7 @@ const dbFixture = (): {
     sent: [],
     calls: [],
     ussd: [],
+  contacts: [],
     parts: {},
     seen: {},
   } as ModemDatabase;

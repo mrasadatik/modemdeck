@@ -18,6 +18,7 @@ export function createApp({
       sent: [],
       calls: [],
       ussd: [],
+      contacts: [],
       parts: {},
       seen: {},
     },

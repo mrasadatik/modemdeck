@@ -81,6 +81,7 @@ export function createSqliteRepository(
         else if (row.kind === 'sent' && sent(value)) snapshot.sent.push(value);
         else if (row.kind === 'calls' && call(value)) snapshot.calls.push(value);
         else if (row.kind === 'ussd' && ussd(value)) snapshot.ussd.push(value);
+        else if (row.kind === 'contact' && record(value)) snapshot.contacts.push(value as never);
         else if (row.kind === 'seen') snapshot.seen[row.id] = 1;
         else if (row.kind === 'part' && record(value)) {
           const entries: Array<[number, string]> = [];
@@ -132,6 +133,13 @@ export function createSqliteRepository(
             : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
           item.ts,
         );
+      for (const item of snapshot.contacts.slice(0, 5000))
+        insert.run(
+          'contact',
+          `${item.simId ?? ''}-${item.index}`,
+          key ? encryptText(options.getKey!()!, JSON.stringify(item)) : JSON.stringify(item),
+          new Date().toISOString(),
+        );
       for (const id of Object.keys(snapshot.seen).slice(-10000))
         insert.run('seen', id, '1', new Date().toISOString());
       for (const [id, value] of Object.entries(snapshot.parts))
@@ -158,6 +166,7 @@ export function createSqliteRepository(
       snapshot.sent = structuredClone(next.sent);
       snapshot.calls = structuredClone(next.calls);
       snapshot.ussd = structuredClone(next.ussd);
+      snapshot.contacts = structuredClone(next.contacts);
       snapshot.parts = structuredClone(next.parts);
       snapshot.seen = structuredClone(next.seen);
       persist();
@@ -168,6 +177,7 @@ export function createSqliteRepository(
       snapshot.sent.length = 0;
       snapshot.calls.length = 0;
       snapshot.ussd.length = 0;
+      snapshot.contacts.length = 0;
       for (const k of Object.keys(snapshot.parts)) delete snapshot.parts[k];
       for (const k of Object.keys(snapshot.seen)) delete snapshot.seen[k];
       decodePayloads(key);
@@ -177,6 +187,7 @@ export function createSqliteRepository(
       snapshot.sent.length = 0;
       snapshot.calls.length = 0;
       snapshot.ussd.length = 0;
+      snapshot.contacts.length = 0;
       for (const k of Object.keys(snapshot.parts)) delete snapshot.parts[k];
       for (const k of Object.keys(snapshot.seen)) delete snapshot.seen[k];
     },

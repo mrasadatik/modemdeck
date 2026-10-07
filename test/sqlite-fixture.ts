@@ -9,6 +9,7 @@ const empty = (): ModemDatabase => ({
   sent: [],
   calls: [],
   ussd: [],
+  contacts: [],
   parts: {},
   seen: {},
 });

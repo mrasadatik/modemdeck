@@ -127,10 +127,35 @@ export function createModemRoutes({
       return { ok: 1 };
     },
     'GET /api/network': network,
-    'GET /api/phonebook': async (_: ApiBody, p: URLSearchParams) =>
-      pbRead(storeName(p.get('store') || 'SM')),
-    'POST /api/phonebook': async (b: ApiBody) =>
-      pb(storeName(b.store), async () => {
+    'GET /api/phonebook': async (_: ApiBody, p: URLSearchParams) => {
+      const simEntries = await pbRead(storeName(p.get('store') || 'SM'));
+      const app = getSimId?.() ? db.contacts.filter((c) => c.simId === getSimId()) : db.contacts;
+      return [
+        ...simEntries.map((c) => ({ ...c, source: 'sim' }) as const),
+        ...app.map(
+          (c) => ({ index: c.index, number: c.number, name: c.name, source: 'app' }) as const,
+        ),
+      ];
+    },
+    'POST /api/phonebook': async (b: ApiBody) => {
+      if (b.dest === 'app') {
+        const number = clean(b.number);
+        if (!validatePhone(number))
+          throw Object.assign(new Error('invalid phone number'), { statusCode: 400 });
+        const name = String(b.name || '');
+        if (!name || [...name].length > 80)
+          throw Object.assign(new Error('invalid contact name'), { statusCode: 400 });
+        const next = db.contacts.length ? Math.max(...db.contacts.map((c) => c.index)) + 1 : 1;
+        db.contacts.unshift({
+          index: b.index ? Number(b.index) : next,
+          name,
+          number,
+          simId: getSimId?.(),
+        });
+        await save();
+        return { ok: 1, source: 'app' };
+      }
+      return pb(storeName(b.store), async () => {
         const number = clean(b.number);
         if (!validatePhone(number))
           throw Object.assign(new Error('invalid phone number'), { statusCode: 400 });
@@ -144,15 +169,23 @@ export function createModemRoutes({
           `AT+CPBW=${index},"${number}",${number.startsWith('+') ? 145 : 129},"${hx(name)}"`,
         );
         return { ok: 1 };
-      }),
-    'POST /api/phonebook/delete': async (b: ApiBody) =>
-      pb(storeName(b.store), async () => {
+      });
+    },
+    'POST /api/phonebook/delete': async (b: ApiBody) => {
+      if (b.dest === 'app') {
+        const index = Number(b.index);
+        db.contacts = db.contacts.filter((c) => c.index !== index);
+        await save();
+        return { ok: 1 };
+      }
+      return pb(storeName(b.store), async () => {
         const index = Number(b.index);
         if (!Number.isInteger(index) || index < 1 || index > 9999)
           throw Object.assign(new Error('invalid phonebook index'), { statusCode: 400 });
         await at(`AT+CPBW=${index}`);
         return { ok: 1 };
-      }),
+      });
+    },
     'GET /api/forwarding': async () => fwdGet(),
     'POST /api/forwarding': async (b: ApiBody) => {
       const reason = Number(b.reason),

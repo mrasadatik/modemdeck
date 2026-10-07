@@ -7,10 +7,11 @@
   export let mode: 'calls' | 'contacts' | 'forwarding';
   export let state: State;
   let store = 'SM',
-    contacts: Array<{ index: number; number: string; name: string }> = [],
+    contacts: Array<{ index: number; number: string; name: string; source?: string }> = [],
     name = '',
     number = '',
-    slot = '';
+    slot = '',
+    dest = 'sim';
   let forwarding: Array<{ reason: number; active: boolean; number: string }> = [];
   const labels = ['Always', 'When busy', 'No reply', 'Unreachable'];
   async function load(): Promise<void> {
@@ -73,8 +74,12 @@
                   ><td>{contact.index}</td><td>{contact.name}</td><td>{contact.number}</td><td
                     ><button
                       class="button danger small"
-                      on:click={() => action('phonebook/delete', { store, index: contact.index })}
-                      >Delete</button
+                      on:click={() =>
+                        action('phonebook/delete', {
+                          store,
+                          index: contact.index,
+                          dest: contact.source === 'app' ? 'app' : 'sim',
+                        })}>Delete</button
                     ></td
                   ></tr
                 >{/each}</tbody
@@ -100,9 +105,14 @@
             aria-label="Phonebook slot"
             bind:value={slot}
             placeholder="First free slot"
-          /><button
+          />
+          <select class="input" bind:value={dest} aria-label="Save destination">
+            <option value="sim">Save to SIM</option>
+            <option value="app">Save inside app (encrypted)</option>
+          </select>
+          <button
             class="button"
-            on:click={() => action('phonebook', { store, name, number, index: slot })}
+            on:click={() => action('phonebook', { store, name, number, index: slot, dest })}
             >Save contact</button
           >
         </div>

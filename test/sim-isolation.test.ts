@@ -19,6 +19,7 @@ const db = (): ModemDatabase => ({
   sent: [{ to: '+1', text: 'hi', ts: '', parts: 1, simId: 'sim-A' }],
   calls: [{ number: '+9', ts: '', simId: 'sim-B' }],
   ussd: [{ code: '*1#', text: 't', more: false, status: 0, ts: '', simId: 'sim-A' }],
+  contacts: [],
   parts: {},
   seen: {},
 });
