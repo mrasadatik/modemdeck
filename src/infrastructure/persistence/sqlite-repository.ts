@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
-import path from 'node:path';
+import { dirname } from 'node:path';
 import type { ModemDatabase } from '../../domain/entities/types.js';
 import type { Repository } from '../../domain/ports/repository.js';
 import { decryptText, encryptText, isEnvelope } from '../crypto/vault.js';
@@ -49,7 +49,7 @@ export function createSqliteRepository(
     onEncrypted?: () => void;
   } = {},
 ): Repository<ModemDatabase> {
-  fs.mkdirSync(path.dirname(path), { recursive: true });
+  fs.mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
