@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "test:coverage": "c8 --all --reporter=text --reporter=html node --test \"dist/test/*.test.js\"",
     "test:coverage:ui": "vitest run --coverage --coverage.provider=istanbul",
+    "reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true});require('fs').rmSync('config.json',{force:true});console.log('Reset complete.')\"",
     "start": "node dist/server.js",
     "test": "npm run build:all && node --test dist/test/*.test.js",
     "capture:trace": "npm run build && node dist/src/tools/capture-trace.js",

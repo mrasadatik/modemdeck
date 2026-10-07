@@ -68,7 +68,7 @@ export function createAuthRoutes({
   return {
     'GET /api/auth/status': async () => {
       const locked = !sessionKeyOrNull();
-      const configured = fs.existsSync(PROFILE_FILE(rootDir));
+      const configured = fs.existsSync(CRED_FILE(rootDir));
       let profile: unknown = null;
       if (!locked) {
         const raw = configured ? fs.readFileSync(PROFILE_FILE(rootDir), 'utf8') : null;
