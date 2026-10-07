@@ -252,7 +252,8 @@ routes['GET /ready'] = async () => ({
   ready: status.connected,
   modem: status.connected ? 'connected' : 'disconnected',
 });
-routes['GET /api/state'] = async () => simScopedState(db, status, activeSimId);
+routes['GET /api/state'] = async () =>
+  sessionKeyOrNull() ? simScopedState(db, status, activeSimId) : { status, sms: [], sent: [], calls: [], ussd: [] };
 const auth = createAuthRoutes({
   rootDir: process.cwd(),
   repository,
