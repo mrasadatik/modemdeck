@@ -1,8 +1,14 @@
 # ModemDeck
 
-Local-first web console for USB AT-command modems: SMS, USSD, call log, phonebook, network & dial-up data — private, self-hosted, localhost-only. Windows is the only supported OS.
+Local-first web console ... — private, self-hosted, localhost-only. Windows is the only supported OS.
 
-Live compatibility is intentionally limited to the connected device and is never inferred from internet data.
+Add real tested devices here. The template:
+
+| OS / CI platform                                                                                                                | Modem model | Firmware | SMS | USSD | Phonebook | Forwarding | Data dial-up | Call audio | Notes |
+| ------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | --- | ---- | --------- | ---------- | ------------ | ---------- | ----- |
+| _No physical modem tested on CI yet — populate from `npm run hardware:test -- COM3` output and `npm run compatibility:report`._ |             |          |     |      |           |            |              |            |       |
+
+Until you add a real device → we only confirm what the Windows AT probe can observe; the UI reports only live evidence.
 
 ## Features
 
@@ -15,8 +21,6 @@ Live compatibility is intentionally limited to the connected device and is never
 - **Call forwarding** — view/set forwarding rules
 - **Raw AT console** — guarded interactive console
 - **Diagnostics** — modem capability probes, compatibility evidence, health/readiness endpoints
-
-> **Not possible on this hardware:** placing or answering calls with audio (no USB audio interface on the modem).
 
 ## Quickstart
 
@@ -53,6 +57,14 @@ Everything can be inspected and hot-reloaded from the **Capabilities → Runtime
 | `logPayloads`                | `MODEMDECK_LOG_PAYLOADS`                           | Interaction payload logging          |
 
 Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persistSensitive`, `logPayloads`.
+
+## Compatibility
+
+| OS / CI platform                                                                                                                | Modem model | Firmware | SMS | USSD | Phonebook | Forwarding | Data dial-up | Call audio | Notes |
+| ------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | --- | ---- | --------- | ---------- | ------------ | ---------- | ----- |
+| _No physical modem tested on CI yet — populate from `npm run hardware:test -- COM3` output and `npm run compatibility:report`._ |             |          |     |      |           |            |              |            |       |
+
+Until a real device is added, we only confirm what the Windows AT probe can observe; the UI reports only live evidence.
 
 ## Security & responsibility
 
