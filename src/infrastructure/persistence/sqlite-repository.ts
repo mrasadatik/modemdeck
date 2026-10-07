@@ -107,7 +107,12 @@ export function createSqliteRepository(
         .slice(0, 5000)
         .map((item) => (sensitive ? item : { ...item, text: '[redacted]' }));
       for (const item of sms)
-        insert.run('sms', item.id, encryptText(options.getKey!()!, JSON.stringify(item)), item.ts);
+        insert.run(
+          'sms',
+          item.id,
+          encryptText(options.getKey!()!, JSON.stringify(item)),
+          item.ts?.slice(0, 10),
+        );
       for (const item of snapshot.sent.slice(0, 5000))
         insert.run(
           'sent',
@@ -115,14 +120,14 @@ export function createSqliteRepository(
           key
             ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
             : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
-          item.ts,
+          item.ts?.slice(0, 10),
         );
       for (const item of snapshot.calls.slice(0, 5000))
         insert.run(
           'calls',
           `${item.ts}-${item.number}`,
           key ? encryptText(key, JSON.stringify(item)) : JSON.stringify(item),
-          item.ts,
+          item.ts?.slice(0, 10),
         );
       for (const item of snapshot.ussd.slice(0, 1000))
         insert.run(
@@ -131,7 +136,7 @@ export function createSqliteRepository(
           key
             ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
             : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
-          item.ts,
+          item.ts?.slice(0, 10),
         );
       for (const item of snapshot.contacts.slice(0, 5000))
         insert.run(
@@ -141,7 +146,7 @@ export function createSqliteRepository(
           new Date().toISOString(),
         );
       for (const id of Object.keys(snapshot.seen).slice(-10000))
-        insert.run('seen', id, '1', new Date().toISOString());
+        insert.run('seen', id, '1', new Date().toISOString().slice(0, 10));
       for (const [id, value] of Object.entries(snapshot.parts))
         insert.run(
           'part',
