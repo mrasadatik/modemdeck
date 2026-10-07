@@ -113,6 +113,17 @@
 
 {#if !authChecked}
   <div class="empty">Loading…</div>
+{:else if locked && !$status.connected}
+  <div
+    class="warning-banner"
+    role="alert"
+    style="min-height:100vh;align-items:center;justify-content:center"
+  >
+    <p>
+      <strong>No modem detected.</strong> Actively looking for a device — the credential screen will activate
+      once a SIM and modem are ready.
+    </p>
+  </div>
 {:else if locked}
   <LockScreen
     {configured}
