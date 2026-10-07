@@ -516,6 +516,44 @@ th {
     animation: none !important;
   }
 }
+/* Microinteractions: subtle, purposeful, never the only affordance. */
+.button {
+  transition:
+    filter 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.button:active {
+  transform: translateY(1px);
+}
+.card {
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--surface3);
+  box-shadow: 0 14px 40px #11111b33;
+}
+.badge {
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+input,
+select,
+textarea {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.sidebar nav button {
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
 @media (max-width: 900px) {
   body {
     height: auto;

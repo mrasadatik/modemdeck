@@ -43,13 +43,18 @@
         recovery,
       });
       if (r.recoveryPhrase) {
-        phraseResult = `Write this down safely — it is the only way to recover without wiping data: ${r.recoveryPhrase}`;
-        alert(phraseResult);
+        phraseResult = r.recoveryPhrase;
+        return;
       }
       onUnlock();
     } catch (error) {
       notify((error as Error).message);
     }
+  }
+  function finishRecoverySave(): void {
+    notify(`Recovery phrase saved. ${$phraseResult}`);
+    phraseResult = '';
+    onUnlock();
   }
   function pickImage(event: Event): void {
     const file = (event.target as HTMLInputElement).files?.[0];
@@ -176,11 +181,29 @@
       <input class="input" bind:value={recovery} aria-label="Recovery number" />
       <div class="label">Profile image (optional)</div>
       <input type="file" accept="image/*" on:change={pickImage} aria-label="Profile image" />
+      {#if image}<img
+          class="avatar-preview"
+          src={image}
+          alt="Profile avatar preview"
+          style="max-width:72px;border-radius:12px;margin:8px 0"
+        />{/if}
       <div class="label">Credential</div>
       <input class="input" type="password" bind:value={password} aria-label="Credential" />
       <div class="label">Confirm credential</div>
       <input class="input" type="password" bind:value={confirm} aria-label="Confirm credential" />
       <div class="row end"><button class="button" on:click={create}>Create profile</button></div>
+      {#if phraseResult}
+        <div class="notice" style="margin-top:16px; word-break: break-all;">
+          <strong
+            >Write this recovery phrase down safely — it is the only way to recover without wiping
+            data:</strong
+          ><br />
+          <code>{phraseResult}</code>
+        </div>
+        <div class="row end" style="margin-top:12px">
+          <button class="button" on:click={finishRecoverySave}>I have saved it — continue</button>
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
