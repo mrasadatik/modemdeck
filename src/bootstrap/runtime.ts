@@ -257,6 +257,7 @@ const auth = createAuthRoutes({
   rootDir: process.cwd(),
   repository,
   activeSimId: () => activeSimId,
+  sendSms: (to, text) => lifecycle.sendSms(to, text),
 });
 Object.assign(routes, auth);
 routes['GET /api/ports'] = async () => {

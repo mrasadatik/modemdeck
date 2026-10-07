@@ -63,6 +63,7 @@ Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persis
 - At rest, every record (SMS/call/USSD text, audit detail, parts) is AES-256-GCM encrypted with a key derived from your profile credential (scrypt). Nothing plaintext is written to SQLite.
 - A profile (name, SIM label, optional SIM number, gender, optional image) is created on first run with a credential. Every protected endpoint requires an unlocked session; while locked they all return 423.
 - SIM anomaly: after a SIM swap hot-plug event, if the connected SIM differs from the registered profile's SIM, the server locks immediately and emits an alert; unlocking with a profile-bound SIM is required before any data is re-exposed.
+- Forgotten credential recovery: onboarding accepts a trusted recovery number; `POST /api/auth/recover/request` SMSes a one-time OTP (10-min expiry, 5-attempt cap) to that number from the connected modem, and `POST /api/auth/recover/verify` with the OTP + a new credential resets access and permanently wipes the previous encrypted archive (old ciphertext is unrecoverable without the old key).
 
 ## Architecture
 

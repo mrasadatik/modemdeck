@@ -13,6 +13,7 @@ import type { ApiBody } from './api-router.js';
 
 const CRED_FILE = (root: string) => path.join(root, 'data', 'credentials.json');
 const PROFILE_FILE = (root: string) => path.join(root, 'data', 'profile.json');
+const RECOVERY_FILE = (root: string) => path.join(root, 'data', 'recovery.json');
 
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
@@ -22,10 +23,12 @@ export function createAuthRoutes({
   rootDir,
   repository,
   activeSimId,
+  sendSms,
 }: {
   rootDir: string;
   repository: Repository<ModemDatabase>;
   activeSimId: () => string;
+  sendSms?: (to: string, text: string) => Promise<number>;
 }): Record<string, (body: ApiBody) => Promise<unknown>> {
   return {
     'GET /api/auth/status': async () => {
@@ -65,6 +68,10 @@ export function createAuthRoutes({
         JSON.stringify({
           version: 1,
           simId: activeSimId() || '',
+          recovery:
+            typeof body.recovery === 'string'
+              ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
+              : '',
           salt: salt.toString('base64'),
           verify: verifyHash(password, salt).toString('base64'),
         }),
@@ -114,5 +121,81 @@ export function createAuthRoutes({
       repository.lock?.();
       return { ok: true };
     },
+    'POST /api/auth/recover/request': async () => {
+      if (!fs.existsSync(CRED_FILE(rootDir)))
+        throw Object.assign(new Error('no profile configured'), { statusCode: 404 });
+      const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
+        recovery?: string;
+      };
+      if (!stored.recovery || !sendSms)
+        throw Object.assign(new Error('recovery number not configured'), { statusCode: 404 });
+      const otp = String(Math.floor(100000 + Math.random() * 900000));
+      fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
+      fs.writeFileSync(RECOVERY_FILE(rootDir), JSON.stringify({ otp, ts: Date.now(), tries: 0 }), {
+        mode: 0o600,
+      });
+      await sendSms(stored.recovery, `ModemDeck recovery code: ${otp}. Expires in 10 minutes.`);
+      return { ok: true, to: stored.recovery.replace(/\d(?=\d{2})/g, '*') };
+    },
+    'POST /api/auth/recover/verify': async (body) => {
+      if (!fs.existsSync(CRED_FILE(rootDir)) || !fs.existsSync(RECOVERY_FILE(rootDir)))
+        throw Object.assign(new Error('no recovery pending'), { statusCode: 404 });
+      const rec = JSON.parse(fs.readFileSync(RECOVERY_FILE(rootDir), 'utf8')) as {
+        otp: string;
+        ts: number;
+        tries: number;
+      };
+      const tries = (rec.tries || 0) + 1;
+      const fresh = Date.now() - rec.ts < 10 * 60 * 1000;
+      const newPassword = body.password;
+      if (!fresh) throw Object.assign(new Error('OTP expired'), { statusCode: 410 });
+      if (tries > 5) throw Object.assign(new Error('too many attempts'), { statusCode: 429 });
+      if (!okPassword(newPassword))
+        throw Object.assign(new Error('invalid new password'), { statusCode: 400 });
+      const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
+        simId?: string;
+        recovery?: string;
+      };
+      if (String(body.otp || '') !== rec.otp) {
+        fs.writeFileSync(RECOVERY_FILE(rootDir), JSON.stringify({ ...rec, tries }));
+        throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
+      }
+      const salt = (await import('node:crypto')).randomBytes(16);
+      const key = deriveKey(newPassword, salt);
+      fs.writeFileSync(
+        CRED_FILE(rootDir),
+        JSON.stringify({
+          version: 1,
+          simId: stored.simId || '',
+          recovery: stored.recovery || '',
+          salt: salt.toString('base64'),
+          verify: verifyHash(newPassword, salt).toString('base64'),
+        }),
+        { mode: 0o600 },
+      );
+      // Old encrypted rows are unrecoverable without the old key — wipe and re-init.
+      dbClear(repository);
+      repository.lock?.();
+      lockSession();
+      fs.rmSync(RECOVERY_FILE(rootDir), { force: true });
+      unlockSession(key);
+      repository.unlock?.(key);
+      return {
+        ok: true,
+        wiped: true,
+        note: 'new credential set; previously encrypted data is unrecoverable and has been removed',
+      };
+    },
   };
+}
+
+function dbClear(repository: Repository<ModemDatabase>): void {
+  const state = repository.state;
+  state.sms.length = 0;
+  state.sent.length = 0;
+  state.calls.length = 0;
+  state.ussd.length = 0;
+  for (const k of Object.keys(state.parts)) delete state.parts[k];
+  for (const k of Object.keys(state.seen)) delete state.seen[k];
+  void repository.replace(state);
 }
