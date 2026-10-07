@@ -150,6 +150,12 @@
         Port and baud changes are applied immediately by reconnecting the modem. HTTP, database, and
         authentication settings remain restart-only.
       </p>
+      <div class="inline-badges" style="margin-top:10px">
+        <span class="badge">HTTPS: {configuration.https === true ? 'on' : 'off'}</span>
+        <span class="badge"
+          >Auth token: {configuration.authConfigured === true ? 'configured' : 'none'}</span
+        >
+      </div>
       <div class="grid">
         <label class="span-4"
           ><div class="label">Modem port</div>
