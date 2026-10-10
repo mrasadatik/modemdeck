@@ -9,6 +9,7 @@ interface ModemRouteDependencies {
   clean: (value: unknown) => string;
   storeName: (value: unknown) => string;
   validatePhone: (value: string) => boolean;
+  normalizePhone: (value: string) => string | null;
   validateUssd: (value: string) => boolean;
   sendSms: (to: string, text: string) => Promise<number>;
   save: () => Promise<void>;
@@ -34,6 +35,7 @@ export function createModemRoutes({
   clean,
   storeName,
   validatePhone,
+  normalizePhone,
   validateUssd,
   sendSms,
   save,
@@ -55,6 +57,14 @@ export function createModemRoutes({
     if (typeof value !== 'string')
       throw Object.assign(new Error(`${field} must be a string`), { statusCode: 400 });
     return value;
+  };
+  /** Strictly validate then canonicalize to E.164; throws 400 otherwise. */
+  const e164 = (raw: string, field: string): string => {
+    if (!validatePhone(raw))
+      throw Object.assign(new Error(`invalid ${field}`), { statusCode: 400 });
+    const normalized = normalizePhone(raw);
+    if (!normalized) throw Object.assign(new Error(`invalid ${field}`), { statusCode: 400 });
+    return normalized;
   };
   return {
     'GET /health': async () => ({
@@ -82,10 +92,8 @@ export function createModemRoutes({
     'GET /api/config': async () => config(),
     'POST /api/config': async (b: ApiBody) => updateConfig(b),
     'POST /api/sms': async (b: ApiBody) => {
-      const to = clean(text(b.to, 'to'));
+      const to = e164(clean(text(b.to, 'to')), 'destination number');
       const message = text(b.text, 'text');
-      if (!validatePhone(to))
-        throw Object.assign(new Error('invalid destination number'), { statusCode: 400 });
       if (!message || [...message].length > 2000)
         throw Object.assign(new Error('message must contain 1-2000 characters'), {
           statusCode: 400,
@@ -139,9 +147,7 @@ export function createModemRoutes({
     },
     'POST /api/phonebook': async (b: ApiBody) => {
       if (b.dest === 'app') {
-        const number = clean(b.number);
-        if (!validatePhone(number))
-          throw Object.assign(new Error('invalid phone number'), { statusCode: 400 });
+        const number = e164(clean(b.number), 'phone number');
         const name = String(b.name || '');
         if (!name || [...name].length > 80)
           throw Object.assign(new Error('invalid contact name'), { statusCode: 400 });
@@ -156,9 +162,7 @@ export function createModemRoutes({
         return { ok: 1, source: 'app' };
       }
       return pb(storeName(b.store), async () => {
-        const number = clean(b.number);
-        if (!validatePhone(number))
-          throw Object.assign(new Error('invalid phone number'), { statusCode: 400 });
+        const number = e164(clean(b.number), 'phone number');
         const name = String(b.name || '');
         if (!name || [...name].length > 80)
           throw Object.assign(new Error('invalid contact name'), { statusCode: 400 });
@@ -188,9 +192,9 @@ export function createModemRoutes({
     },
     'GET /api/forwarding': async () => fwdGet(),
     'POST /api/forwarding': async (b: ApiBody) => {
-      const reason = Number(b.reason),
-        n = clean(b.number);
-      if (!Number.isInteger(reason) || reason < 0 || reason > 3 || (b.on && !validatePhone(n)))
+      const reason = Number(b.reason);
+      const n = b.on ? e164(clean(b.number), 'forwarding number') : '';
+      if (!Number.isInteger(reason) || reason < 0 || reason > 3)
         throw Object.assign(new Error('invalid forwarding request'), { statusCode: 400 });
       await at(
         `AT+CCFC=${reason},${b.on ? 3 : 4}${b.on ? `,"${n}",${n.startsWith('+') ? 145 : 129}` : ''}`,

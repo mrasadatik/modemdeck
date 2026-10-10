@@ -11,6 +11,7 @@ import {
   osUnprotect,
 } from '../../infrastructure/crypto/vault.js';
 import { unlockSession, lockSession, sessionKeyOrNull } from '../../bootstrap/session.js';
+import { normalizeToE164 } from '../../domain/services/phone-numbers.js';
 import type { Repository } from '../../domain/ports/repository.js';
 import type { ModemDatabase } from '../../domain/entities/types.js';
 import type { ApiBody } from './api-router.js';
@@ -91,6 +92,17 @@ export function createAuthRoutes({
         throw Object.assign(new Error('name and simLabel are required'), {
           statusCode: 400,
         });
+      const rawRecovery =
+        typeof body.recovery === 'string' ? body.recovery.trim().replace(/[^\d+]/g, '') : '';
+      // Strictly coupled: an optional recovery number must be a valid
+      // libphonenumber-js number (parsed with the onboarding country),
+      // stored canonically as E.164.
+      const recovery = rawRecovery
+        ? (normalizeToE164(rawRecovery, country || undefined) ??
+          (() => {
+            throw Object.assign(new Error('invalid recovery number'), { statusCode: 400 });
+          })())
+        : '';
       const salt = randomBytes(16);
       const dataKey = randomBytes(32);
       const phrase = Array.from(randomBytes(16))
@@ -99,12 +111,7 @@ export function createAuthRoutes({
       const pwKey = deriveKey(password, salt);
       const [osWrapped, osRecoveryEnc, osSimIdEnc] = osProtectBulk([
         dataKey,
-        Buffer.from(
-          typeof body.recovery === 'string'
-            ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
-            : '',
-          'utf8',
-        ),
+        Buffer.from(recovery, 'utf8'),
         Buffer.from(activeSimId() || '', 'utf8'),
       ]);
       fs.mkdirSync(path.join(rootDir, 'data'), { recursive: true });
@@ -113,10 +120,7 @@ export function createAuthRoutes({
         JSON.stringify({
           version: 2,
           simId: osWrapped ? '' : activeSimId() || '',
-          recovery:
-            osWrapped || typeof body.recovery !== 'string'
-              ? ''
-              : body.recovery.replace(/[^\d+]/g, '').slice(0, 20),
+          recovery: osWrapped ? '' : recovery,
           salt: salt.toString('base64'),
           verify: verifyHash(password, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
@@ -129,10 +133,7 @@ export function createAuthRoutes({
                 simId_os: osSimIdEnc ?? '',
               }
             : {
-                recovery:
-                  typeof body.recovery === 'string'
-                    ? body.recovery.replace(/[^\d+]/g, '').slice(0, 20)
-                    : '',
+                recovery,
                 simId: activeSimId() || '',
               }),
         }),

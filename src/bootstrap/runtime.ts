@@ -17,7 +17,7 @@ import {
 } from '../application/modem-services.js';
 import { validateUssd } from '../domain/services/protocol.js';
 import { getDefaultCountry } from '../interfaces/http/auth-routes.js';
-import { phoneIsValid } from '../domain/services/phone-numbers.js';
+import { phoneIsValid, normalizeToE164 } from '../domain/services/phone-numbers.js';
 import type { UssdResult } from '../domain/entities/types.js';
 import { createProfileRegistry } from '../infrastructure/modem/profiles.js';
 import { simScopedState } from '../application/sim-visibility.js';
@@ -195,6 +195,7 @@ const routes = createModemRoutes({
   clean,
   storeName,
   validatePhone: (value) => phoneIsValid(value, getDefaultCountry() || undefined),
+  normalizePhone: (value) => normalizeToE164(value, getDefaultCountry() || undefined),
   validateUssd,
   sendSms: (to: string, text: string) => lifecycle.sendSms(to, text),
   save: repository.save,
