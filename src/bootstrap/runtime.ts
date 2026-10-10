@@ -96,12 +96,24 @@ const ussd = new UssdSessionManager(command);
 const network = new NetworkService(command);
 const phonebook = new PhonebookService(command);
 const forwarding = new ForwardingService(command);
-const run = (file: string, args: string[]): Promise<{ ok: boolean; out: string }> =>
-  new Promise((resolve) =>
-    execFile(file, args, { windowsHide: true }, (error, stdout, stderr) =>
-      resolve({ ok: !error, out: String(stdout || stderr || error?.message || '') }),
-    ),
-  );
+const run = (
+  file: string,
+  args: string[],
+  options?: { timeoutMs?: number },
+): Promise<{ ok: boolean; out: string }> =>
+  new Promise((resolve) => {
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    execFile(file, args, { windowsHide: true, timeout: timeoutMs }, (error, stdout, stderr) => {
+      const timedOut =
+        error instanceof Error && 'killed' in error && (error as { killed?: boolean }).killed;
+      resolve({
+        ok: !error,
+        out: timedOut
+          ? `${file} timed out after ${timeoutMs}ms`
+          : String(stdout || stderr || error?.message || ''),
+      });
+    });
+  });
 const provider = createDefaultProvider(run);
 const dialup = new DialupAdapter(config.dialup, run, () => provider.discoverDialupProfiles());
 const dataTransports = new DataTransportSelector(() => provider.discoverDataTransports());

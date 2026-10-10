@@ -232,7 +232,11 @@ export class ForwardingService {
 export class DialupAdapter {
   constructor(
     private name: string,
-    private readonly run: (file: string, args: string[]) => Promise<{ ok: boolean; out: string }>,
+    private readonly run: (
+      file: string,
+      args: string[],
+      options?: { timeoutMs?: number },
+    ) => Promise<{ ok: boolean; out: string }>,
     private readonly discover?: () => Promise<string[]>,
   ) {}
   setName(name: string): void {
@@ -266,7 +270,11 @@ export class DialupAdapter {
     if (!profile.name) throw new Error('no matching OS dial-up profile was found');
     const current = await this.state();
     if (current.on === on) return current;
-    const result = await this.run('rasdial', on ? [profile.name] : [profile.name, '/DISCONNECT']);
+    const result = await this.run('rasdial', on ? [profile.name] : [profile.name, '/DISCONNECT'], {
+      // Dialing out can take a minute on slow networks; bounded so the
+      // request can never hang forever. The UI offers cancel on top.
+      timeoutMs: 120_000,
+    });
     if (!result.ok) throw new Error(result.out.trim());
     return this.state();
   }

@@ -82,7 +82,24 @@ export function createSerialTransport(path: string, baudRate: number): Promise<S
       port.on('error', handler);
       return handler;
     })();
+    let settled = false;
+    // A wedged handle may never invoke the open callback; bound it so
+    // discovery can move on instead of hanging forever.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      port.removeListener('error', earlySwallow);
+      try {
+        port.close(() => undefined);
+      } catch {
+        /* best effort */
+      }
+      reject(new Error(`timed out opening ${path}`));
+    }, 10_000);
     port.open((error: Error | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       port.removeListener('error', earlySwallow);
       if (error) {
         try {

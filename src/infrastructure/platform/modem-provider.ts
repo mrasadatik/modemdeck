@@ -7,6 +7,7 @@ export interface PlatformModem {
 export type PlatformCommand = (
   file: string,
   args: string[],
+  options?: { timeoutMs?: number },
 ) => Promise<{ ok: boolean; out: string }>;
 
 export async function listPlatformModems(run: PlatformCommand): Promise<PlatformModem[]> {

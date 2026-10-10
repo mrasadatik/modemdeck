@@ -73,3 +73,19 @@ test('dial-up adapter does not reconnect or disconnect an already matching state
   await adapter.set(true);
   assert.deepEqual(calls, [[], []]);
 });
+
+test('dial-up connect passes a bounded timeout to the platform command', async () => {
+  const seen: Array<{ args: string[]; options?: { timeoutMs?: number } }> = [];
+  let connected = false;
+  const adapter = new DialupAdapter(
+    'entry',
+    async (_file, args, options?: { timeoutMs?: number }) => {
+      seen.push({ args, options });
+      if (args.length > 0) connected = true;
+      return { ok: true, out: connected ? 'Connected to entry' : 'No connections' };
+    },
+  );
+  await adapter.set(true);
+  const dial = seen.find((call) => call.args.length > 0);
+  assert.ok(dial?.options?.timeoutMs && dial.options.timeoutMs > 0);
+});
