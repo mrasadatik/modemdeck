@@ -9,6 +9,6 @@ export default defineConfig({
     url: 'http://127.0.0.1:3100/health',
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { PORT: '3100', MODEMDECK_PORT: '' },
+    env: { PORT: '3100', MODEMDECK_PORT: '', MODEMDECK_SETUP_SKIP_VERIFY: '1' },
   },
 });

@@ -20,7 +20,16 @@ const CRED_FILE = (root: string) => path.join(root, 'data', 'credentials.json');
 const PROFILE_FILE = (root: string) => path.join(root, 'data', 'profile.json');
 /** In-memory-only pending OTP — never serialized to disk. */
 const pendingOtp = new Map<string, { otp: string; ts: number; tries: number }>();
+/** In-memory-only onboarding verification — never serialized to disk. */
+let pendingSetup: { otp: string; to: string; ts: number; tries: number; verified: boolean } | null =
+  null;
 let failedLogins: number[] = [];
+
+/** Testing-only escape hatch (no modem in CI): skips the setup OTP proof. */
+const setupSkipVerify = (): boolean => process.env.MODEMDECK_SETUP_SKIP_VERIFY === '1';
+
+const maskNumber = (value: string): string => value.replace(/\d(?=\d{2})/g, '*');
+const mintOtp = (): string => String(Math.floor(100000 + Math.random() * 900000));
 
 const okPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 4 && value.length <= 200;
@@ -78,6 +87,42 @@ export function createAuthRoutes({
       }
       return { locked, configured, profile };
     },
+    'POST /api/auth/setup/request': async (body) => {
+      if (fs.existsSync(CRED_FILE(rootDir)))
+        throw Object.assign(new Error('profile already exists'), { statusCode: 409 });
+      if (!sendSms)
+        throw Object.assign(new Error('modem unavailable for verification'), { statusCode: 503 });
+      const country =
+        typeof body.country === 'string' && body.country.length === 2
+          ? body.country.toUpperCase()
+          : currentCountry;
+      const raw =
+        typeof body.recovery === 'string' ? body.recovery.trim().replace(/[^\d+]/g, '') : '';
+      const to = raw ? normalizeToE164(raw, country || undefined) : null;
+      if (!to) throw Object.assign(new Error('invalid recovery number'), { statusCode: 400 });
+      const otp = mintOtp();
+      await sendSms(to, `ModemDeck setup code: ${otp}. Expires in 10 minutes.`);
+      pendingSetup = { otp, to, ts: Date.now(), tries: 0, verified: false };
+      return { ok: true, to: maskNumber(to) };
+    },
+    'POST /api/auth/setup/verify': async (body) => {
+      if (fs.existsSync(CRED_FILE(rootDir)))
+        throw Object.assign(new Error('profile already exists'), { statusCode: 409 });
+      const pending = pendingSetup;
+      if (!pending) throw Object.assign(new Error('no verification pending'), { statusCode: 404 });
+      const tries = (pending.tries || 0) + 1;
+      if (Date.now() - pending.ts >= 10 * 60 * 1000) {
+        pendingSetup = null;
+        throw Object.assign(new Error('OTP expired'), { statusCode: 410 });
+      }
+      if (tries > 5) throw Object.assign(new Error('too many attempts'), { statusCode: 429 });
+      if (String(body.otp || '') !== pending.otp) {
+        pendingSetup = { ...pending, tries };
+        throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
+      }
+      pendingSetup = { ...pending, tries, verified: true };
+      return { ok: true, to: maskNumber(pending.to) };
+    },
     'POST /api/auth/setup': async (body) => {
       if (fs.existsSync(CRED_FILE(rootDir)))
         throw Object.assign(new Error('profile already exists'), { statusCode: 409 });
@@ -94,15 +139,27 @@ export function createAuthRoutes({
         });
       const rawRecovery =
         typeof body.recovery === 'string' ? body.recovery.trim().replace(/[^\d+]/g, '') : '';
-      // Strictly coupled: an optional recovery number must be a valid
+      // Strictly coupled and required: the recovery number must be a valid
       // libphonenumber-js number (parsed with the onboarding country),
-      // stored canonically as E.164.
+      // stored canonically as E.164, and proven by OTP unless skipped for
+      // automated testing (MODEMDECK_SETUP_SKIP_VERIFY).
       const recovery = rawRecovery
         ? (normalizeToE164(rawRecovery, country || undefined) ??
           (() => {
             throw Object.assign(new Error('invalid recovery number'), { statusCode: 400 });
           })())
         : '';
+      if (!recovery)
+        throw Object.assign(new Error('recovery number is required'), { statusCode: 400 });
+      if (!setupSkipVerify()) {
+        const proof = pendingSetup;
+        if (!proof?.verified || proof.to !== recovery) {
+          throw Object.assign(new Error('verify the recovery number first'), {
+            statusCode: 403,
+          });
+        }
+        pendingSetup = null;
+      }
       const salt = randomBytes(16);
       const dataKey = randomBytes(32);
       const phrase = Array.from(randomBytes(16))

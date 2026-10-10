@@ -34,19 +34,20 @@ The modem is auto-detected across available serial ports with bounded probing. T
 
 Everything can be inspected and hot-reloaded from the **Capabilities → Runtime configuration** panel (port, baud, dial-up profile, modem profile, trace capture), or set via `config.json` / environment variables.
 
-| Key                          | Env override                                       | Notes                                |
-| ---------------------------- | -------------------------------------------------- | ------------------------------------ |
-| `port`                       | `MODEMDECK_PORT`                                   | Serial port (empty = auto-detect)    |
-| `http`                       | `PORT`                                             | HTTP port (default 3000)             |
-| `baud`                       | `MODEMDECK_BAUD`                                   | Serial baud (default 115200)         |
-| `dialup`                     | `DIALUP`                                           | OS dial-up profile name              |
-| `authToken`                  | `MODEMDECK_AUTH_TOKEN`                             | Require `Authorization: Bearer …`    |
-| `dataPath`                   | `MODEMDECK_DATA_PATH`                              | SQLite path                          |
-| `retentionDays`              | `MODEMDECK_RETENTION_DAYS`                         | Default 90                           |
-| `persistSensitive`           | `MODEMDECK_PERSIST_SENSITIVE`                      | Redact SMS bodies if false (default) |
-| `profile`                    | `MODEMDECK_PROFILE`                                | Modem profile id                     |
-| `captureRaw` / `capturePath` | `MODEMDECK_CAPTURE_RAW` / `MODEMDECK_CAPTURE_PATH` | Raw serial trace capture             |
-| `logPayloads`                | `MODEMDECK_LOG_PAYLOADS`                           | Interaction payload logging          |
+| Key                          | Env override                                       | Notes                                                      |
+| ---------------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| `port`                       | `MODEMDECK_PORT`                                   | Serial port (empty = auto-detect)                          |
+| `http`                       | `PORT`                                             | HTTP port (default 3000)                                   |
+| `baud`                       | `MODEMDECK_BAUD`                                   | Serial baud (default 115200)                               |
+| `dialup`                     | `DIALUP`                                           | OS dial-up profile name                                    |
+| `authToken`                  | `MODEMDECK_AUTH_TOKEN`                             | Require `Authorization: Bearer …`                          |
+| `dataPath`                   | `MODEMDECK_DATA_PATH`                              | SQLite path                                                |
+| `retentionDays`              | `MODEMDECK_RETENTION_DAYS`                         | Default 90                                                 |
+| `persistSensitive`           | `MODEMDECK_PERSIST_SENSITIVE`                      | Redact SMS bodies if false (default)                       |
+| `profile`                    | `MODEMDECK_PROFILE`                                | Modem profile id                                           |
+| `captureRaw` / `capturePath` | `MODEMDECK_CAPTURE_RAW` / `MODEMDECK_CAPTURE_PATH` | Raw serial trace capture                                   |
+| `logPayloads`                | `MODEMDECK_LOG_PAYLOADS`                           | Interaction payload logging                                |
+| —                            | `MODEMDECK_SETUP_SKIP_VERIFY`                      | Testing only: skip setup OTP proof (never set in real use) |
 
 Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persistSensitive`, `logPayloads`.
 
@@ -65,7 +66,7 @@ Until a real device is added, we only confirm what the AT probe can observe; the
 - Sensitive text is redacted in SQLite unless `MODEMDECK_PERSIST_SENSITIVE=true`. Detailed interaction logs (correlation IDs, command/response) are recorded; payload logging is opt-in.
 - The UI shows a **non-blocking** notice that this is a personal, local tool for lawful use. Acknowledging is never enforced — you are solely responsible for using it lawfully and ethically.
 - At rest, every record (SMS/call/USSD text, audit detail, parts) is AES-256-GCM encrypted with a key derived from your profile credential (scrypt). Nothing plaintext is written to SQLite.
-- A profile (name and SIM label) is created on first run with a credential. Every protected endpoint requires an unlocked session; while locked they all return 423.
+- A profile (name and SIM label) is created on first run with a credential. Onboarding also requires a trusted recovery number, proven by an SMS OTP sent from the connected modem (`POST /api/auth/setup/request` → `POST /api/auth/setup/verify`, 10-min expiry, 5-attempt cap) before the profile is created. Every protected endpoint requires an unlocked session; while locked they all return 423.
 - Signature settings for the sign-out flow: a manual **Lock** button in the top bar, plus optional auto-lock after a configured idle window (`MODEMDECK_LOCK_MINUTES`, `config.json` `lockMinutes`, 0 disables). Both immediately wipe decrypted in-memory state and force re-authentication through the detached LockScreen.
 - Forgotten credential recovery: two methods. (a) Recovery phrase — a random 16-byte hex phrase generated at setup; presenting it with a new credential re-wraps the at-rest data key, so all existing encrypted history is fully preserved. (b) OTP — onboarding also stores a trusted recovery number; `POST /api/auth/recover/request` SMSes a one-time OTP (10-min expiry, 5-attempt cap) from the connected modem. The OTP itself is held only in server memory (never written to disk); `POST /api/auth/recover/verify` with the OTP resets the credential and permanently wipes the previous encrypted archive.
 
