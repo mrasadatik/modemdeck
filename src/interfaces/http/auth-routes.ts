@@ -11,10 +11,18 @@ import {
   osUnprotect,
 } from '../../infrastructure/crypto/vault.js';
 import { unlockSession, lockSession, sessionKeyOrNull } from '../../bootstrap/session.js';
-import { normalizeToE164 } from '../../domain/services/phone-numbers.js';
+import {
+  parseField,
+  password,
+  countryCode,
+  recoveryNumber,
+  trimmedText,
+} from '../../domain/validation/schemas.js';
 import type { Repository } from '../../domain/ports/repository.js';
 import type { ModemDatabase } from '../../domain/entities/types.js';
-import type { ApiBody } from './api-router.js';
+import type { SessionManager } from '../../infrastructure/auth/session-store.js';
+import type { ApiContext, ApiRoutes } from './api-router.js';
+import { SESSION_ENVELOPE } from './api-router.js';
 
 const CRED_FILE = (root: string) => path.join(root, 'data', 'credentials.json');
 const PROFILE_FILE = (root: string) => path.join(root, 'data', 'profile.json');
@@ -69,15 +77,49 @@ export function createAuthRoutes({
   repository,
   activeSimId,
   sendSms,
+  sessions,
+  emitSessionLocked,
 }: {
   rootDir: string;
   repository: Repository<ModemDatabase>;
   activeSimId: () => string;
   sendSms?: (to: string, text: string) => Promise<number>;
-}): Record<string, (body: ApiBody) => Promise<unknown>> {
+  sessions: SessionManager;
+  emitSessionLocked?: (sessionIds: string[]) => void;
+}): ApiRoutes {
+  /** Mint a session row for an unlock; returns the id plus cookie envelope. */
+  const openSession = (via: string): { sessionId: string; [SESSION_ENVELOPE]: { set: string } } => {
+    const record = sessions.create({ simId: activeSimId() || '', via });
+    try {
+      void repository.audit?.({ action: 'session.open', detail: via })?.catch(() => {});
+    } catch {
+      /* audit must never break auth */
+    }
+    return { sessionId: record.id, [SESSION_ENVELOPE]: { set: record.id } };
+  };
+  /** Wipe decrypted state only when no live session remains. */
+  const lockIfIdle = (): void => {
+    if (sessions.live().length === 0 && sessionKeyOrNull()) {
+      lockSession();
+      repository.lock?.();
+    }
+  };
+  const sessionInfo = (id: string | undefined): Record<string, unknown> | null => {
+    if (!id) return null;
+    const record = sessions.get(id);
+    if (!record || record.revoked) return null;
+    return {
+      id: record.id,
+      createdAt: new Date(record.createdAt).toISOString(),
+      lastSeenAt: new Date(record.lastSeenAt).toISOString(),
+      via: record.via,
+    };
+  };
   return {
-    'GET /api/auth/status': async () => {
-      const locked = !sessionKeyOrNull();
+    'GET /api/auth/status': async (_body, _params, ctx?: ApiContext) => {
+      const sid = ctx?.sessionId;
+      const live = sid ? sessions.get(sid) : null;
+      const locked = !sessionKeyOrNull() || !sid || !live || live.revoked;
       const configured = fs.existsSync(CRED_FILE(rootDir));
       let profile: unknown = null;
       if (!locked) {
@@ -85,7 +127,7 @@ export function createAuthRoutes({
         const plain = raw ? decryptText(sessionKeyOrNull()!, raw) : null;
         if (plain) profile = JSON.parse(plain);
       }
-      return { locked, configured, profile };
+      return { locked, configured, profile, session: sessionInfo(sid) };
     },
     'POST /api/auth/setup/request': async (body) => {
       if (fs.existsSync(CRED_FILE(rootDir)))
@@ -98,8 +140,14 @@ export function createAuthRoutes({
           : currentCountry;
       const raw =
         typeof body.recovery === 'string' ? body.recovery.trim().replace(/[^\d+]/g, '') : '';
-      const to = raw ? normalizeToE164(raw, country || undefined) : null;
+      const to = raw ? parseField(recoveryNumber(country || undefined), raw) : null;
       if (!to) throw Object.assign(new Error('invalid recovery number'), { statusCode: 400 });
+      // Cost-aware: the same number within a fresh window reuses the live
+      // code instead of paying for another SMS. Attempts restart with it.
+      if (pendingSetup && pendingSetup.to === to && Date.now() - pendingSetup.ts < 60_000) {
+        pendingSetup = { ...pendingSetup, tries: 0 };
+        return { ok: true, to: maskNumber(to), reused: true };
+      }
       const otp = mintOtp();
       await sendSms(to, `ModemDeck setup code: ${otp}. Expires in 10 minutes.`);
       pendingSetup = { otp, to, ts: Date.now(), tries: 0, verified: false };
@@ -126,11 +174,11 @@ export function createAuthRoutes({
     'POST /api/auth/setup': async (body) => {
       if (fs.existsSync(CRED_FILE(rootDir)))
         throw Object.assign(new Error('profile already exists'), { statusCode: 409 });
-      const password = body.password;
-      if (!okPassword(password))
-        throw Object.assign(new Error('password must be 4–200 characters'), { statusCode: 400 });
-      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '';
-      const simLabel = typeof body.simLabel === 'string' ? body.simLabel.trim().slice(0, 120) : '';
+      const typedPassword: unknown = body.password;
+      parseField(password(), typedPassword);
+      const passwordValue = typedPassword as string;
+      const name = parseField(trimmedText(120), body.name);
+      const simLabel = parseField(trimmedText(120), body.simLabel);
       const country =
         typeof body.country === 'string' ? body.country.slice(0, 2).toUpperCase() : '';
       if (!name || !simLabel)
@@ -144,10 +192,7 @@ export function createAuthRoutes({
       // stored canonically as E.164, and proven by OTP unless skipped for
       // automated testing (MODEMDECK_SETUP_SKIP_VERIFY).
       const recovery = rawRecovery
-        ? (normalizeToE164(rawRecovery, country || undefined) ??
-          (() => {
-            throw Object.assign(new Error('invalid recovery number'), { statusCode: 400 });
-          })())
+        ? parseField(recoveryNumber(country || undefined), rawRecovery)
         : '';
       if (!recovery)
         throw Object.assign(new Error('recovery number is required'), { statusCode: 400 });
@@ -165,7 +210,7 @@ export function createAuthRoutes({
       const phrase = Array.from(randomBytes(16))
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('-');
-      const pwKey = deriveKey(password, salt);
+      const pwKey = deriveKey(passwordValue, salt);
       const [osWrapped, osRecoveryEnc, osSimIdEnc] = osProtectBulk([
         dataKey,
         Buffer.from(recovery, 'utf8'),
@@ -179,7 +224,7 @@ export function createAuthRoutes({
           simId: osWrapped ? '' : activeSimId() || '',
           recovery: osWrapped ? '' : recovery,
           salt: salt.toString('base64'),
-          verify: verifyHash(password, salt).toString('base64'),
+          verify: verifyHash(passwordValue, salt).toString('base64'),
           wrapData: encryptText(pwKey, dataKey.toString('base64')),
           wrapPhrase: encryptText(deriveKey(phrase, salt), dataKey.toString('base64')),
           osProtected: osWrapped ?? '',
@@ -216,12 +261,11 @@ export function createAuthRoutes({
         ok: true,
         recoveryPhrase: phrase,
         profile: { name, simLabel },
+        ...openSession('setup'),
       };
     },
     'POST /api/auth/login': async (body) => {
-      const password = body.password;
-      if (!okPassword(password))
-        throw Object.assign(new Error('invalid password'), { statusCode: 400 });
+      const passwordValue = parseField(password('invalid password'), body.password);
       const now = Date.now();
       failedLogins = failedLogins.filter((t) => now - t < 15 * 60_000);
       if (failedLogins.length >= 5)
@@ -242,10 +286,10 @@ export function createAuthRoutes({
         recovery_os?: string;
       };
       const salt = Buffer.from(stored.salt, 'base64');
-      const keyMaterial = deriveKey(password, salt);
+      const keyMaterial = deriveKey(passwordValue, salt);
       if (
         Buffer.from(stored.verify, 'base64').toString('base64') !==
-        verifyHash(password, salt).toString('base64')
+        verifyHash(passwordValue, salt).toString('base64')
       ) {
         failedLogins.push(now);
         throw Object.assign(new Error('wrong password'), { statusCode: 401 });
@@ -281,7 +325,7 @@ export function createAuthRoutes({
       } catch {
         /* ignore */
       }
-      return { ok: true };
+      return { ok: true, ...openSession('login') };
     },
     'POST /api/auth/profile': async (body) => {
       if (!sessionKeyOrNull()) throw Object.assign(new Error('locked'), { statusCode: 423 });
@@ -303,9 +347,7 @@ export function createAuthRoutes({
               : (current.simLabel ?? ''),
           country:
             typeof body.country === 'string'
-              ? body.country.length === 2
-                ? body.country.toUpperCase()
-                : ''
+              ? parseField(countryCode(), body.country)
               : (current.country ?? ''),
           simId: current.simId ?? '',
         } as Record<string, unknown>;
@@ -319,10 +361,22 @@ export function createAuthRoutes({
         throw Object.assign(new Error('profile update failed'), { cause: reason });
       }
     },
-    'POST /api/auth/logout': async () => {
-      lockSession();
-      repository.lock?.();
-      return { ok: true };
+    'POST /api/auth/logout': async (_body, _params, ctx?: ApiContext) => {
+      if (ctx?.sessionId) sessions.revoke(ctx.sessionId, 'logout');
+      else sessions.revokeAll('logout');
+      lockIfIdle();
+      return { ok: true, [SESSION_ENVELOPE]: { clear: true } };
+    },
+    'POST /api/auth/lock': async (_body, _params, ctx?: ApiContext) => {
+      const sid = ctx?.sessionId;
+      const live = sid ? sessions.get(sid) : null;
+      if (!sessionKeyOrNull() || !live || live.revoked)
+        throw Object.assign(new Error('profile is locked — unlock first'), { statusCode: 423 });
+      const ids = sessions.live().map((session) => session.id);
+      sessions.revokeAll('lock');
+      lockIfIdle();
+      emitSessionLocked?.(ids);
+      return { ok: true, [SESSION_ENVELOPE]: { clear: true } };
     },
     'POST /api/auth/recover/phrase': async (body) => {
       if (!fs.existsSync(CRED_FILE(rootDir)))
@@ -387,7 +441,7 @@ export function createAuthRoutes({
       } catch {
         /* ignore */
       }
-      return { ok: true, preserved: true };
+      return { ok: true, preserved: true, ...openSession('recover') };
     },
     'POST /api/auth/recover/request': async () => {
       if (!fs.existsSync(CRED_FILE(rootDir)))
@@ -400,10 +454,10 @@ export function createAuthRoutes({
       const rec = readMeta(stored);
       if (!rec.recovery || !sendSms)
         throw Object.assign(new Error('recovery number not configured'), { statusCode: 404 });
-      const otp = String(Math.floor(100000 + Math.random() * 900000));
+      const otp = mintOtp();
       pendingOtp.set('otp', { otp, ts: Date.now(), tries: 0 });
       await sendSms(rec.recovery, `ModemDeck recovery code: ${otp}. Expires in 10 minutes.`);
-      return { ok: true, to: rec.recovery.replace(/\d(?=\d{2})/g, '*') };
+      return { ok: true, to: maskNumber(rec.recovery) };
     },
     'POST /api/auth/recover/verify': async (body) => {
       const stored = JSON.parse(fs.readFileSync(CRED_FILE(rootDir), 'utf8')) as {
@@ -419,11 +473,9 @@ export function createAuthRoutes({
         throw Object.assign(new Error('no recovery pending'), { statusCode: 404 });
       const tries = (recObj.tries || 0) + 1;
       const fresh = Date.now() - recObj.ts < 10 * 60 * 1000;
-      const newPassword = body.password;
       if (!fresh) throw Object.assign(new Error('OTP expired'), { statusCode: 410 });
       if (tries > 5) throw Object.assign(new Error('too many attempts'), { statusCode: 429 });
-      if (!okPassword(newPassword))
-        throw Object.assign(new Error('invalid new password'), { statusCode: 400 });
+      const newPassword = parseField(password('invalid new password'), body.password);
       if (String(body.otp || '') !== recObj.otp) {
         pendingOtp.set('otp', { ...recObj, tries });
         throw Object.assign(new Error('wrong OTP'), { statusCode: 401 });
@@ -462,6 +514,7 @@ export function createAuthRoutes({
         ok: true,
         wiped: true,
         note: 'new credential set; previously encrypted data is unrecoverable and has been removed',
+        ...openSession('recover'),
       };
     },
   };
