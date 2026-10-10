@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
+import { activeView } from './lib/store';
 
 const state = {
   status: { connected: true, port: 'COM4', error: '', capabilities: { sms: true, network: true } },
@@ -92,5 +93,32 @@ describe('App integration shell', () => {
     expect(getByText('Network health')).toBeTruthy();
     await fireEvent.click(getByRole('button', { name: /Mobile data$/ }));
     expect(getByText('Connection')).toBeTruthy();
+  });
+
+  it('blocks the shell when the backend goes unreachable, then recovers', async () => {
+    vi.useFakeTimers();
+    activeView.set('overview');
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    let alive = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (!alive) throw new TypeError('fetch failed');
+        if (path.endsWith('/api/state')) return new Response(JSON.stringify(state));
+        if (path.endsWith('/api/auth/status'))
+          return new Response(JSON.stringify({ locked: false, configured: true }));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    const { getByRole, getByText, queryByText } = render(App);
+    await vi.advanceTimersByTimeAsync(25000);
+    expect(getByText(/Server unreachable/)).toBeTruthy();
+    expect(queryByText('Recent messages')).toBeNull();
+    alive = true;
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(getByText('Recent messages')).toBeTruthy();
+    expect(getByRole('button', { name: /Overview$/ })).toBeTruthy();
+    vi.useRealTimers();
   });
 });

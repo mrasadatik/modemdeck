@@ -130,19 +130,54 @@
       return null;
     }
   }
+  let serverDown = false;
+  let healthMisses = 0;
+  /** Raw liveness probe: bypasses api() so routine checks never flash the progress bar. */
+  async function probeHealth(): Promise<boolean> {
+    try {
+      const response = await fetch('/health');
+      // 401 still proves the server is alive (token guard answered).
+      return response.ok || response.status === 401;
+    } catch {
+      return false;
+    }
+  }
+  async function boot(): Promise<void> {
+    await checkAuth();
+    if (!locked) {
+      try {
+        await loadState();
+      } catch (error) {
+        notify((error as Error).message, 'error');
+      }
+    }
+    booted = true;
+  }
+  async function checkServer(): Promise<void> {
+    if (document.visibilityState === 'hidden') return;
+    if (await probeHealth()) {
+      healthMisses = 0;
+      if (serverDown) {
+        serverDown = false;
+        resetLiveState();
+        await boot();
+      }
+      return;
+    }
+    healthMisses += 1;
+    if (healthMisses >= 2 && !serverDown) {
+      // Backend confirmed gone: wipe in-memory state so no stale
+      // decrypted data stays on screen, and block the whole shell.
+      serverDown = true;
+      healthMisses = 0;
+      resetLiveState();
+      locked = true;
+    }
+  }
   onMount(() => {
     resetLiveState();
-    void (async () => {
-      await checkAuth();
-      if (!locked) {
-        try {
-          await loadState();
-        } catch (error) {
-          notify((error as Error).message, 'error');
-        }
-      }
-      booted = true;
-    })();
+    void boot();
+    const healthTimer = setInterval(() => void checkServer(), 10000);
     const events = new EventSource('/events');
     events.onopen = () => {
       // A reconnect silently resyncs anything missed while the channel was down.
@@ -153,6 +188,8 @@
     events.onerror = () => {
       sseWasLive = false;
       sseLive.set(false);
+      // Fast path: don't wait for the next poll when the channel drops.
+      void checkServer();
     };
     events.addEventListener('status', (event) => applyStatus(parseEvent(event)));
     events.addEventListener('sms', (event) => applySms(parseEvent(event)));
@@ -177,12 +214,28 @@
         locked = true;
       }
     });
-    return () => events.close();
+    return () => {
+      clearInterval(healthTimer);
+      events.close();
+    };
   });
 </script>
 
 {#if !authChecked || !booted}
   <div class="empty">Loading…</div>
+{:else if serverDown}
+  <div
+    class="warning-banner"
+    role="alert"
+    style="min-height:100dvh;align-items:center;justify-content:center"
+  >
+    <p>
+      <strong>Server unreachable.</strong> The ModemDeck backend stopped answering — start it with
+      <code>npm run start</code> and everything reappears here on its own. Nothing is shown meanwhile
+      so stale data is never left on screen.
+    </p>
+    <button class="button secondary small" on:click={() => void checkServer()}>Retry now</button>
+  </div>
 {:else if locked && !$status.connected}
   <div
     class="warning-banner"
