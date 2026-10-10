@@ -10,6 +10,11 @@ export const defaultCountry = writable('');
 
 /** Number of in-flight api() requests; drives the global progress bar. */
 export const busyCount = writable(0);
+/**
+ * Single-flight signal: true while ANY request is in flight. Navigation and
+ * trigger actions across the shell disable on this so modem operations can
+ * never overlap, run in parallel, or conflict. Lock stays exempt always.
+ */
 export const busy = derived(busyCount, ($count) => $count > 0);
 
 /** True when the error is a user/system cancellation, not a failure. */

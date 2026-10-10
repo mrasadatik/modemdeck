@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { api, formatTime } from '../lib/api';
-  import type { DataState, Network, State } from '../lib/types';
+  import type { DataState, Network } from '../lib/types';
   import Page from './Page.svelte';
-  import { abortScope, isAbort, notify, status } from '../lib/store';
-  export let state: State;
+  import { abortScope, busy, isAbort, notify, status } from '../lib/store';
+  import { liveState } from '../lib/live';
   export let open: (view: string) => void;
   const aborts = abortScope();
   onDestroy(() => aborts.abortAll());
@@ -61,7 +61,7 @@
         <h3>Recent messages</h3>
         <button class="button secondary small" on:click={() => open('inbox')}>Open inbox</button>
       </div>
-      {#each state.sms.slice(0, 3) as message (message.id)}<div class="message">
+      {#each $liveState.sms.slice(0, 3) as message (message.id)}<div class="message">
           <div class="row between">
             <b>{message.from}</b><span class="subtle">{formatTime(message.ts)}</span>
           </div>
@@ -71,10 +71,12 @@
     <div class="card span-4">
       <h3>Quick actions</h3>
       <div class="stack">
-        <button class="button" on:click={() => open('send')}>＋ Compose SMS</button><button
-          class="button secondary"
-          on:click={() => open('ussd')}>Run USSD code</button
-        ><button class="button secondary" on:click={() => open('data')}>Manage mobile data</button>
+        <button class="button" disabled={$busy} on:click={() => open('send')}>＋ Compose SMS</button
+        ><button class="button secondary" disabled={$busy} on:click={() => open('ussd')}
+          >Run USSD code</button
+        ><button class="button secondary" disabled={$busy} on:click={() => open('data')}
+          >Manage mobile data</button
+        >
       </div>
     </div>
   </div>

@@ -26,15 +26,26 @@
   export let datalistId = '';
   /** Initial full value (e.g. an existing rule number). */
   export let initialValue = '';
+  /** Bump to clear the number field without remounting (no focus loss). */
+  export let clearToken = 0;
   /** When true, an empty field counts as valid (optional numbers). */
   export let allowEmpty = false;
+  /** Locks country + number inputs (e.g. after OTP proof). */
+  export let disabled = false;
 
   let national = '';
   let nationalInput: HTMLInputElement | null = null;
+  let seenClearToken = 0;
 
   $: effectiveCountry = country || defaultCountry || '';
   $: callingCode = callingCodeFor(effectiveCountry) ?? '';
   $: placeholder = exampleFor(effectiveCountry || FALLBACK_COUNTRY)?.national ?? '';
+  $: if (clearToken !== seenClearToken) {
+    seenClearToken = clearToken;
+    national = '';
+    e164 = '';
+    valid = allowEmpty;
+  }
 
   function adopt(value: string): void {
     const raw = String(value ?? '').trim();
@@ -95,6 +106,7 @@
     previewClass="country-preview"
     previewFallback={defaultCountry}
     onPick={onCountryPick}
+    {disabled}
   />
   <input
     class="input calling-input"
@@ -107,11 +119,13 @@
   <input
     class="input"
     aria-label={label}
+    aria-invalid={national !== '' && !valid}
     {placeholder}
     value={national}
     list={datalistId || undefined}
     inputmode="tel"
     autocomplete="tel-national"
+    {disabled}
     bind:this={nationalInput}
     on:input={onNationalInput}
   />

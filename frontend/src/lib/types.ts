@@ -1,6 +1,8 @@
 export interface Status {
   connected: boolean;
   port: string;
+  /** Most recent connected port, retained across drops for diagnostics. */
+  lastPort?: string;
   error: string;
   capabilities: Record<string, boolean>;
 }
@@ -22,6 +24,8 @@ export interface Sent {
   text: string;
   ts: string;
   parts: number;
+  /** Client-side optimistic entry awaiting server confirmation. */
+  pending?: boolean;
 }
 export interface Call {
   number: string;

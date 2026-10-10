@@ -6,6 +6,7 @@
   import { abortScope, isAbort, notify } from '../lib/store';
   import SelectDropdown from './SelectDropdown.svelte';
   import { countryOptions } from '../lib/phone-numbers-lib.js';
+  import { configForm, formErrors, profileForm } from '../../../src/domain/validation/schemas.js';
   const aborts = abortScope();
   onDestroy(() => aborts.abortAll());
   let capabilities: Record<string, boolean> = {};
@@ -17,11 +18,36 @@
   let dialupProfiles: string[] = [];
   let profileName = '',
     profileCountry = '';
+  let profileErrors: Record<string, string> = {};
+  let profileShown = false;
+  let configErrors: Record<string, string> = {};
+  let configShown = false;
+  function validateConfigForm(): Record<string, string> {
+    return formErrors(configForm(), {
+      port,
+      baud,
+      dialup,
+      profile,
+      captureRaw,
+      capturePath,
+      lockMinutes,
+      sessionMaxMinutes,
+    });
+  }
+  $: if (configShown) configErrors = validateConfigForm();
+  $: if (profileShown)
+    profileErrors = formErrors(profileForm(), { name: profileName, country: profileCountry });
   let savingProfile = false;
   let savingConfig = false;
   let rechecking = false;
+  // Single-flight within the view: any running action blocks the other triggers.
+  $: viewBusy = savingProfile || savingConfig || rechecking;
   async function saveProfile(): Promise<void> {
     if (savingProfile) return;
+    profileShown = true;
+    const errs = formErrors(profileForm(), { name: profileName, country: profileCountry });
+    profileErrors = errs;
+    if (Object.keys(errs).length) return;
     savingProfile = true;
     try {
       await api(
@@ -105,6 +131,9 @@
   }
   async function save(): Promise<void> {
     if (savingConfig) return;
+    configShown = true;
+    configErrors = validateConfigForm();
+    if (Object.keys(configErrors).length) return;
     savingConfig = true;
     try {
       const result = await api<{ hotReloaded: boolean }>(
@@ -150,7 +179,7 @@
   title="Capabilities"
   description="What this modem has actually reported during live probing."
   ><svelte:fragment slot="actions"
-    ><button class="button secondary" disabled={rechecking} on:click={recheck}
+    ><button class="button secondary" disabled={viewBusy} on:click={recheck}
       >{rechecking ? '↻ Rechecking…' : '↻ Recheck'}</button
     ></svelte:fragment
   >
@@ -177,7 +206,15 @@
       <div class="grid">
         <label class="span-4"
           ><div class="label">Name</div>
-          <input class="input" bind:value={profileName} aria-label="Profile name" /></label
+          <input
+            class="input"
+            bind:value={profileName}
+            aria-label="Profile name"
+            aria-invalid={profileShown && !!profileErrors.name}
+          />
+          {#if profileShown && profileErrors.name}<p class="field-error">
+              {profileErrors.name}
+            </p>{/if}</label
         >
         <label class="span-4"
           ><div class="label">Default country</div>
@@ -190,7 +227,7 @@
         >
       </div>
       <div class="row end">
-        <button class="button" disabled={savingProfile} on:click={saveProfile}
+        <button class="button" disabled={viewBusy} on:click={saveProfile}
           >{savingProfile ? 'Saving…' : 'Save profile'}</button
         >
       </div>
@@ -215,7 +252,9 @@
             bind:value={port}
             list="available-modem-ports"
             placeholder="Automatic"
+            aria-invalid={configShown && !!configErrors.port}
           />
+          {#if configShown && configErrors.port}<p class="field-error">{configErrors.port}</p>{/if}
           <datalist id="available-modem-ports">
             {#each availablePorts as option (option.path)}<option value={option.path}
                 >{option.label}</option
@@ -230,7 +269,9 @@
             list="common-baud-rates"
             min="1200"
             max="4000000"
+            aria-invalid={configShown && !!configErrors.baud}
           />
+          {#if configShown && configErrors.baud}<p class="field-error">{configErrors.baud}</p>{/if}
           <datalist id="common-baud-rates">
             <option value="9600"></option><option value="57600"></option><option value="115200"
             ></option><option value="230400"></option><option value="460800"></option>
@@ -242,14 +283,26 @@
             bind:value={dialup}
             list="dialup-profiles"
             placeholder="Auto-discover"
+            aria-invalid={configShown && !!configErrors.dialup}
           />
+          {#if configShown && configErrors.dialup}<p class="field-error">
+              {configErrors.dialup}
+            </p>{/if}
           <datalist id="dialup-profiles">
             {#each dialupProfiles as name (name)}<option value={name}></option>{/each}
           </datalist></label
         >
         <label class="span-4"
           ><div class="label">Modem profile</div>
-          <input class="input" bind:value={profile} placeholder="generic-standards" /></label
+          <input
+            class="input"
+            bind:value={profile}
+            placeholder="generic-standards"
+            aria-invalid={configShown && !!configErrors.profile}
+          />
+          {#if configShown && configErrors.profile}<p class="field-error">
+              {configErrors.profile}
+            </p>{/if}</label
         >
         <label class="span-4"
           ><div class="label">Trace file path</div>
@@ -257,11 +310,25 @@
             class="input"
             bind:value={capturePath}
             placeholder="data/traces/live.ndjson"
-          /></label
+            aria-invalid={configShown && !!configErrors.capturePath}
+          />
+          {#if configShown && configErrors.capturePath}<p class="field-error">
+              {configErrors.capturePath}
+            </p>{/if}</label
         >
         <label class="span-4"
           ><div class="label">Auto-lock (minutes, 0=off)</div>
-          <input class="input" type="number" bind:value={lockMinutes} min="0" max="1440" /></label
+          <input
+            class="input"
+            type="number"
+            bind:value={lockMinutes}
+            min="0"
+            max="1440"
+            aria-invalid={configShown && !!configErrors.lockMinutes}
+          />
+          {#if configShown && configErrors.lockMinutes}<p class="field-error">
+              {configErrors.lockMinutes}
+            </p>{/if}</label
         >
         <label class="span-4"
           ><div class="label">Session max (minutes)</div>
@@ -271,14 +338,18 @@
             bind:value={sessionMaxMinutes}
             min="0"
             max="10080"
-          /></label
+            aria-invalid={configShown && !!configErrors.sessionMaxMinutes}
+          />
+          {#if configShown && configErrors.sessionMaxMinutes}<p class="field-error">
+              {configErrors.sessionMaxMinutes}
+            </p>{/if}</label
         >
       </div>
       <label class="row"
         ><input type="checkbox" bind:checked={captureRaw} /> Capture raw modem trace</label
       >
       <div class="row end">
-        <button class="button" disabled={savingConfig} on:click={save}
+        <button class="button" disabled={viewBusy} on:click={save}
           >{savingConfig ? 'Saving…' : 'Save and apply'}</button
         >
       </div>

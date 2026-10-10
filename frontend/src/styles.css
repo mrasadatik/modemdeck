@@ -172,6 +172,13 @@ button {
   box-shadow: inset 3px 0 var(--accent);
   color: var(--accent);
 }
+.sidebar nav button:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+.sidebar nav button:disabled:hover {
+  background: transparent;
+}
 .sidebar nav span {
   font-size: 16px;
   text-align: center;
@@ -443,6 +450,19 @@ select:focus {
 }
 .stack > :first-child {
   margin-top: 0;
+}
+.field-error {
+  color: var(--danger);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.input[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.cost-note {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 6px;
 }
 .notice {
   background: var(--surface);

@@ -13,7 +13,15 @@
     SentIcon,
     Settings02Icon,
   } from '@hugeicons/core-free-icons';
-  import type { State } from './lib/types';
+  import {
+    applyCall,
+    applyCarrier,
+    applySms,
+    applyStatus,
+    loadState,
+    resetLiveState,
+    sseLive,
+  } from './lib/live';
   import { activeView, busy, defaultCountry, notify, status, toast, toastKind } from './lib/store';
   import Sidebar from './components/Sidebar.svelte';
   import Topbar from './components/Topbar.svelte';
@@ -43,23 +51,29 @@
       { title: item.label, description: 'Control and observe your modem safely.' },
     ]),
   );
+  let sseWasLive = false;
   let showWarning = true;
   if (typeof localStorage !== 'undefined' && localStorage.getItem('modemdeck-warning-dismissed'))
     showWarning = false;
   let locked = true;
   let configured = false;
   let authChecked = false;
+  let booted = false;
   let refreshing = false;
   let locking = false;
+  /** This tab's session id (from login/setup responses or auth/status). */
+  let sessionId = '';
   async function checkAuth(): Promise<void> {
     try {
       const a = await api<{
         locked: boolean;
         configured: boolean;
         profile?: { country?: string };
+        session?: { id: string };
       }>('auth/status');
       locked = a.locked;
       configured = a.configured;
+      if (a.session?.id) sessionId = a.session.id;
       defaultCountry.set(a.profile?.country || '');
       authChecked = true;
     } catch {
@@ -70,17 +84,9 @@
     showWarning = false;
     localStorage.setItem('modemdeck-warning-dismissed', '1');
   }
-  let state: State = {
-    status: { connected: false, port: '', error: '', capabilities: {} },
-    sms: [],
-    sent: [],
-    calls: [],
-    ussd: [],
-  };
   async function refresh(): Promise<void> {
     try {
-      state = await api<State>('state');
-      status.set(state.status);
+      await loadState();
     } catch (error) {
       notify((error as Error).message, 'error');
     }
@@ -101,31 +107,81 @@
     if (locking) return;
     locking = true;
     try {
-      await api('auth/logout', {});
+      await api('auth/lock', {});
     } catch {
       /* ignore */
     }
+    sessionId = '';
     locked = true;
     locking = false;
   }
+  function parseLockedEvent(event: Event): string | undefined {
+    try {
+      const data = JSON.parse((event as MessageEvent).data) as { sessionId?: unknown };
+      return typeof data.sessionId === 'string' ? data.sessionId : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  function parseEvent(event: Event): unknown {
+    try {
+      return JSON.parse((event as MessageEvent).data);
+    } catch {
+      return null;
+    }
+  }
   onMount(() => {
-    void checkAuth();
-    void refresh();
+    resetLiveState();
+    void (async () => {
+      await checkAuth();
+      if (!locked) {
+        try {
+          await loadState();
+        } catch (error) {
+          notify((error as Error).message, 'error');
+        }
+      }
+      booted = true;
+    })();
     const events = new EventSource('/events');
-    events.addEventListener('status', (event) => {
-      const next = JSON.parse((event as MessageEvent).data);
-      status.set(next);
-      state.status = next;
-      state = state;
+    events.onopen = () => {
+      // A reconnect silently resyncs anything missed while the channel was down.
+      if (sseWasLive) void refresh();
+      sseWasLive = true;
+      sseLive.set(true);
+    };
+    events.onerror = () => {
+      sseWasLive = false;
+      sseLive.set(false);
+    };
+    events.addEventListener('status', (event) => applyStatus(parseEvent(event)));
+    events.addEventListener('sms', (event) => applySms(parseEvent(event)));
+    events.addEventListener('call', (event) => applyCall(parseEvent(event)));
+    events.addEventListener('carrier', (event) => applyCarrier(parseEvent(event)));
+    events.addEventListener('port', (event) => {
+      const move = parseEvent(event) as { previous?: unknown; current?: unknown } | null;
+      if (
+        move &&
+        typeof move.previous === 'string' &&
+        typeof move.current === 'string' &&
+        move.previous &&
+        move.current
+      )
+        notify(`Modem moved from ${move.previous} to ${move.current}`, 'info');
     });
-    events.addEventListener('sms', () => void refresh());
-    events.addEventListener('call', () => void refresh());
-    events.addEventListener('locked', () => (locked = true));
+    events.addEventListener('locked', (event) => {
+      // Per-session targeting: ignore lock events meant for other sessions.
+      const target = parseLockedEvent(event);
+      if (!target || target === sessionId) {
+        sessionId = '';
+        locked = true;
+      }
+    });
     return () => events.close();
   });
 </script>
 
-{#if !authChecked}
+{#if !authChecked || !booted}
   <div class="empty">Loading…</div>
 {:else if locked && !$status.connected}
   <div
@@ -134,14 +190,21 @@
     style="min-height:100dvh;align-items:center;justify-content:center"
   >
     <p>
-      <strong>No modem detected.</strong> Actively looking for a device — the credential screen will activate
-      once a SIM and modem are ready.
+      <strong>No modem detected.</strong> Actively looking for a device — the credential screen will
+      activate once a SIM and modem are ready. Discovery retries automatically; replugging the modem
+      restarts the search.
+      {#if $status.error}<br /><span>Last modem report: {$status.error}</span>{/if}
+      {#if $status.lastPort}<span> (last seen on {$status.lastPort})</span>{/if}
     </p>
+    <button class="button secondary small" disabled={refreshing} on:click={onRefresh}
+      >{refreshing ? 'Checking…' : 'Check again'}</button
+    >
   </div>
 {:else if locked}
   <LockScreen
     {configured}
-    onUnlock={() => {
+    onUnlock={(sid?: string) => {
+      if (sid) sessionId = sid;
       locked = false;
       void checkAuth();
       void refresh();
@@ -166,15 +229,14 @@
     <div class="content">
       <Topbar {labels} refresh={onRefresh} {refreshing} onLock={manualLock} {locking} />
       <main class="main" id="main" aria-busy={$busy}>
-        {#if $activeView === 'overview'}<Dashboard {state} {open} />
+        {#if $activeView === 'overview'}<Dashboard {open} />
         {:else if ['inbox', 'send', 'ussd'].includes($activeView)}<Messages
-            {state}
             mode={$activeView as 'inbox' | 'send' | 'ussd'}
           />
         {:else if $activeView === 'network'}<Network />
         {:else if $activeView === 'data'}<Data />
         {:else if $activeView === 'settings'}<Tools />
-        {:else}<Operations {state} mode={$activeView as 'calls' | 'contacts' | 'forwarding'} />{/if}
+        {:else}<Operations mode={$activeView as 'calls' | 'contacts' | 'forwarding'} />{/if}
       </main>
     </div>
   </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeView, status } from '../lib/store';
+  import { activeView, busy, status } from '../lib/store';
   import { HugeiconsIcon } from '@hugeicons/svelte';
   export let items: Array<{ id: string; icon: unknown; label: string }>;
 </script>
@@ -14,6 +14,7 @@
     {#each items as item (item.id)}<button
         class:active={$activeView === item.id}
         aria-current={$activeView === item.id ? 'page' : undefined}
+        disabled={$busy}
         on:click={() => activeView.set(item.id)}
         >{#if typeof item.icon === 'string'}<span aria-hidden="true">{item.icon}</span
           >{:else}<HugeiconsIcon

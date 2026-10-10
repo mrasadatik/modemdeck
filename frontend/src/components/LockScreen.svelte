@@ -5,8 +5,17 @@
   import PhoneNumberInput from './PhoneNumberInput.svelte';
   import SelectDropdown from './SelectDropdown.svelte';
   import { countryOptions } from '../lib/phone-numbers-lib.js';
+  import {
+    formErrors,
+    loginForm,
+    recoverOtpForm,
+    recoverPhraseForm,
+    setupForm,
+    setupOtpForm,
+  } from '../../../src/domain/validation/schemas.js';
   export let configured = false;
-  export let onUnlock = (): void => {};
+  export let onUnlock: (sessionId?: string) => void = () => {};
+  let createdSessionId = '';
   const aborts = abortScope();
   onDestroy(() => aborts.abortAll());
   const title = configured ? 'Unlock profile' : 'Create your profile';
@@ -14,6 +23,40 @@
   $: verified = verifiedTo !== '' && verifiedTo === recoveryE164;
   // A changed number voids the previous proof.
   $: if (verifiedTo && verifiedTo !== recoveryE164) verifiedTo = '';
+  let setupErrors: Record<string, string> = {};
+  let setupShown = false;
+  let otpError = '';
+  let loginErrors: Record<string, string> = {};
+  let loginShown = false;
+  let phraseErrors: Record<string, string> = {};
+  let phraseShown = false;
+  let otpResetErrors: Record<string, string> = {};
+  let otpResetShown = false;
+  function validateSetup(): Record<string, string> {
+    return formErrors(setupForm(recoveryCountry || country || undefined), {
+      name,
+      simLabel,
+      recovery: recoveryE164,
+      password,
+      confirm,
+    });
+  }
+  $: if (setupShown) setupErrors = validateSetup();
+  $: if (loginShown) loginErrors = formErrors(loginForm(), { password });
+  $: if (phraseShown)
+    phraseErrors = formErrors(recoverPhraseForm(), {
+      phrase,
+      password: newPassword,
+      confirm: confirmNew,
+    });
+  $: if (otpResetShown)
+    otpResetErrors = formErrors(recoverOtpForm(), {
+      otp,
+      password: newPassword,
+      confirm: confirmNew,
+    });
+  // Typing a new code clears the previous shape error.
+  $: if (setupOtp !== undefined && otpError) otpError = '';
   let name = '',
     simLabel = '',
     country = '',
@@ -39,18 +82,24 @@
     resetting = false,
     sendingSetupOtp = false,
     verifyingSetupOtp = false;
+  // Single-flight per form: any running action blocks the sibling triggers.
+  $: setupBusy = creating || sendingSetupOtp || verifyingSetupOtp;
+  $: forgotBusy = recovering || sendingOtp || resetting;
   async function requestSetupOtp(): Promise<void> {
     if (sendingSetupOtp) return;
     if (!recoveryValid) return notify('Enter a valid recovery number first', 'error');
     sendingSetupOtp = true;
     try {
-      const r = await api<{ to: string }>(
+      const r = await api<{ to: string; reused?: boolean }>(
         'auth/setup/request',
         { recovery: recoveryE164, country: recoveryCountry || country },
         { signal: aborts.signal() },
       );
       otpTo = r.to;
-      notify(`Setup code sent to ${r.to}`, 'ok');
+      notify(
+        r.reused ? `Code still valid — check messages on ${r.to}` : `Setup code sent to ${r.to}`,
+        'ok',
+      );
     } catch (error) {
       if (isAbort(error)) return;
       notify((error as Error).message, 'error');
@@ -60,6 +109,12 @@
   }
   async function verifySetupOtp(): Promise<void> {
     if (verifyingSetupOtp) return;
+    const shape = formErrors(setupOtpForm(), { otp: setupOtp });
+    if (shape.otp) {
+      otpError = shape.otp;
+      return;
+    }
+    otpError = '';
     verifyingSetupOtp = true;
     try {
       await api('auth/setup/verify', { otp: setupOtp }, { signal: aborts.signal() });
@@ -72,12 +127,24 @@
       verifyingSetupOtp = false;
     }
   }
+  function changeNumber(): void {
+    verifiedTo = '';
+    setupOtp = '';
+    otpError = '';
+  }
   async function unlock(): Promise<void> {
     if (unlocking) return;
+    loginShown = true;
+    const errs = formErrors(loginForm(), { password });
+    if (Object.keys(errs).length) return;
     unlocking = true;
     try {
-      await api('auth/login', { password }, { signal: aborts.signal() });
-      onUnlock();
+      const r = await api<{ ok: boolean; sessionId?: string }>(
+        'auth/login',
+        { password },
+        { signal: aborts.signal() },
+      );
+      onUnlock(r.sessionId);
     } catch (error) {
       if (isAbort(error)) return;
       notify((error as Error).message, 'error');
@@ -87,11 +154,13 @@
   }
   async function create(): Promise<void> {
     if (creating) return;
-    if (password !== confirm) return notify('passwords do not match', 'error');
+    setupShown = true;
+    setupErrors = validateSetup();
+    if (Object.keys(setupErrors).length) return;
     if (!verified) return notify('Verify the recovery number first', 'error');
     creating = true;
     try {
-      const r = await api<{ recoveryPhrase?: string }>(
+      const r = await api<{ recoveryPhrase?: string; sessionId?: string }>(
         'auth/setup',
         {
           name,
@@ -104,9 +173,10 @@
       );
       if (r.recoveryPhrase) {
         phraseResult = r.recoveryPhrase;
+        createdSessionId = r.sessionId ?? '';
         return;
       }
-      onUnlock();
+      onUnlock(r.sessionId);
     } catch (error) {
       if (isAbort(error)) return;
       notify((error as Error).message, 'error');
@@ -117,14 +187,21 @@
   function finishRecoverySave(): void {
     notify('Recovery phrase saved — welcome back', 'ok');
     phraseResult = '';
-    onUnlock();
+    onUnlock(createdSessionId || undefined);
+    createdSessionId = '';
   }
   async function confirmPhrase(): Promise<void> {
     if (recovering) return;
-    if (newPassword !== confirmNew) return notify('passwords do not match', 'error');
+    phraseShown = true;
+    phraseErrors = formErrors(recoverPhraseForm(), {
+      phrase,
+      password: newPassword,
+      confirm: confirmNew,
+    });
+    if (Object.keys(phraseErrors).length) return;
     recovering = true;
     try {
-      const r = await api<{ preserved?: boolean }>(
+      const r = await api<{ preserved?: boolean; sessionId?: string }>(
         'auth/recover/phrase',
         {
           phrase,
@@ -135,7 +212,7 @@
       notify(r.preserved ? 'Archive preserved — credential updated' : 'Credential updated', 'ok');
       forgotMode = false;
       otpSent = false;
-      onUnlock();
+      onUnlock(r.sessionId);
     } catch (error) {
       if (isAbort(error)) return;
       notify((error as Error).message, 'error');
@@ -159,14 +236,23 @@
   }
   async function confirmRecovery(): Promise<void> {
     if (resetting) return;
-    if (newPassword !== confirmNew) return notify('passwords do not match', 'error');
+    const errs = formErrors(recoverOtpForm(), { otp, password: newPassword, confirm: confirmNew });
+    if (Object.keys(errs).length) {
+      otpResetErrors = errs;
+      otpResetShown = true;
+      return;
+    }
     resetting = true;
     try {
-      await api('auth/recover/verify', { otp, password: newPassword }, { signal: aborts.signal() });
+      const r = await api<{ ok: boolean; sessionId?: string }>(
+        'auth/recover/verify',
+        { otp, password: newPassword },
+        { signal: aborts.signal() },
+      );
       notify('Recovery complete — log in with the new credential', 'ok');
       forgotMode = false;
       otpSent = false;
-      onUnlock();
+      onUnlock(r.sessionId);
     } catch (error) {
       if (isAbort(error)) return;
       notify((error as Error).message, 'error');
@@ -185,7 +271,14 @@
     </p>
     {#if configured && !forgotMode}
       <div class="label">Credential</div>
-      <input class="input" type="password" bind:value={password} aria-label="Credential" />
+      <input
+        class="input"
+        type="password"
+        bind:value={password}
+        aria-label="Credential"
+        aria-invalid={loginShown && !!loginErrors.password}
+      />
+      {#if loginShown && loginErrors.password}<p class="field-error">{loginErrors.password}</p>{/if}
       <div class="row between">
         <button class="button secondary small" on:click={() => (forgotMode = true)}
           >Forgot credential?</button
@@ -198,18 +291,37 @@
         <button class="button secondary small" on:click={() => (forgotMode = false)}>Back</button>
       </div>
       <div class="label">Use recovery phrase</div>
-      <input class="input" bind:value={phrase} aria-label="Recovery phrase" />
+      <input
+        class="input"
+        bind:value={phrase}
+        aria-label="Recovery phrase"
+        aria-invalid={phraseShown && !!phraseErrors.phrase}
+      />
+      {#if phraseShown && phraseErrors.phrase}<p class="field-error">{phraseErrors.phrase}</p>{/if}
       <div class="label">New credential</div>
-      <input class="input" type="password" bind:value={newPassword} aria-label="New credential" />
+      <input
+        class="input"
+        type="password"
+        bind:value={newPassword}
+        aria-label="New credential"
+        aria-invalid={phraseShown && !!phraseErrors.password}
+      />
+      {#if phraseShown && phraseErrors.password}<p class="field-error">
+          {phraseErrors.password}
+        </p>{/if}
       <div class="label">Confirm new credential</div>
       <input
         class="input"
         type="password"
         bind:value={confirmNew}
         aria-label="Confirm new credential"
+        aria-invalid={phraseShown && !!(phraseErrors.confirm ?? phraseErrors._root)}
       />
+      {#if phraseShown && (phraseErrors.confirm ?? phraseErrors._root)}<p class="field-error">
+          {phraseErrors.confirm ?? phraseErrors._root}
+        </p>{/if}
       <div class="row end">
-        <button class="button" disabled={recovering} on:click={confirmPhrase}
+        <button class="button" disabled={forgotBusy} on:click={confirmPhrase}
           >{recovering ? 'Recovering…' : 'Recover with phrase'}</button
         >
       </div>
@@ -219,36 +331,73 @@
         onboarding. Confirming it resets the credential; previously encrypted data is permanently
         removed.
       </p>
+      <p class="cost-note">⚠ The OTP arrives by SMS — carrier charges may apply.</p>
       {#if !otpSent}
         <div class="row end">
-          <button class="button" disabled={sendingOtp} on:click={requestOtp}
+          <button class="button" disabled={forgotBusy} on:click={requestOtp}
             >{sendingOtp ? 'Sending…' : 'Send OTP'}</button
           >
         </div>
       {:else}
         <div class="label">OTP from recovery number</div>
-        <input class="input" bind:value={otp} aria-label="OTP" />
+        <input
+          class="input"
+          bind:value={otp}
+          aria-label="OTP"
+          aria-invalid={otpResetShown && !!otpResetErrors.otp}
+          placeholder="6-digit code"
+        />
+        {#if otpResetShown && otpResetErrors.otp}<p class="field-error">
+            {otpResetErrors.otp}
+          </p>{/if}
         <div class="label">New credential</div>
-        <input class="input" type="password" bind:value={newPassword} aria-label="New credential" />
+        <input
+          class="input"
+          type="password"
+          bind:value={newPassword}
+          aria-label="New credential"
+          aria-invalid={otpResetShown && !!otpResetErrors.password}
+        />
+        {#if otpResetShown && otpResetErrors.password}<p class="field-error">
+            {otpResetErrors.password}
+          </p>{/if}
         <div class="label">Confirm new credential</div>
         <input
           class="input"
           type="password"
           bind:value={confirmNew}
           aria-label="Confirm new credential"
+          aria-invalid={otpResetShown && !!(otpResetErrors.confirm ?? otpResetErrors._root)}
         />
+        {#if otpResetShown && (otpResetErrors.confirm ?? otpResetErrors._root)}<p
+            class="field-error"
+          >
+            {otpResetErrors.confirm ?? otpResetErrors._root}
+          </p>{/if}
         <div class="row between">
           <button class="button secondary small" on:click={() => (forgotMode = false)}>Back</button
-          ><button class="button danger" disabled={resetting} on:click={confirmRecovery}
+          ><button class="button danger" disabled={forgotBusy} on:click={confirmRecovery}
             >{resetting ? 'Resetting…' : 'Reset & wipe archive'}</button
           >
         </div>
       {/if}
     {:else}
       <div class="label">Your name</div>
-      <input class="input" bind:value={name} aria-label="Name" />
+      <input
+        class="input"
+        bind:value={name}
+        aria-label="Name"
+        aria-invalid={setupShown && !!setupErrors.name}
+      />
+      {#if setupShown && setupErrors.name}<p class="field-error">{setupErrors.name}</p>{/if}
       <div class="label">SIM label</div>
-      <input class="input" bind:value={simLabel} aria-label="SIM label" />
+      <input
+        class="input"
+        bind:value={simLabel}
+        aria-label="SIM label"
+        aria-invalid={setupShown && !!setupErrors.simLabel}
+      />
+      {#if setupShown && setupErrors.simLabel}<p class="field-error">{setupErrors.simLabel}</p>{/if}
       <div class="label">Default country</div>
       <SelectDropdown
         bind:value={country}
@@ -264,13 +413,20 @@
         bind:valid={recoveryValid}
         label="Recovery number"
         allowEmpty={false}
+        disabled={verified}
       />
+      {#if setupShown && setupErrors.recovery}<p class="field-error">{setupErrors.recovery}</p>{/if}
+      <p class="cost-note">⚠ The verification code arrives by SMS — carrier charges may apply.</p>
       <div class="row">
-        <button class="button secondary small" disabled={sendingSetupOtp} on:click={requestSetupOtp}
-          >{sendingSetupOtp ? 'Sending…' : otpTo ? 'Resend code' : 'Send code'}</button
-        >
-        {#if verified}<span class="badge ok">✓ Verified</span>
-        {:else if otpTo}<span class="subtle">Code sent to {otpTo} — enter it below.</span>{/if}
+        {#if verified}
+          <span class="badge ok">✓ Verified</span>
+          <button class="button secondary small" on:click={changeNumber}>Change number</button>
+        {:else}
+          <button class="button secondary small" disabled={setupBusy} on:click={requestSetupOtp}
+            >{sendingSetupOtp ? 'Sending…' : otpTo ? 'Resend code' : 'Send code'}</button
+          >
+          {#if otpTo}<span class="subtle">Code sent to {otpTo} — enter it below.</span>{/if}
+        {/if}
       </div>
       {#if otpTo && !verified}
         <div class="label">Setup code</div>
@@ -279,23 +435,37 @@
             class="input"
             bind:value={setupOtp}
             aria-label="Setup code"
+            aria-invalid={!!otpError}
             placeholder="6-digit code"
           />
-          <button
-            class="button secondary small"
-            disabled={verifyingSetupOtp}
-            on:click={verifySetupOtp}
-          >
+          <button class="button secondary small" disabled={setupBusy} on:click={verifySetupOtp}>
             {verifyingSetupOtp ? 'Verifying…' : 'Verify'}
           </button>
         </div>
+        {#if otpError}<p class="field-error">{otpError}</p>{/if}
       {/if}
       <div class="label">Credential</div>
-      <input class="input" type="password" bind:value={password} aria-label="Credential" />
+      <input
+        class="input"
+        type="password"
+        bind:value={password}
+        aria-label="Credential"
+        aria-invalid={setupShown && !!setupErrors.password}
+      />
+      {#if setupShown && setupErrors.password}<p class="field-error">{setupErrors.password}</p>{/if}
       <div class="label">Confirm credential</div>
-      <input class="input" type="password" bind:value={confirm} aria-label="Confirm credential" />
+      <input
+        class="input"
+        type="password"
+        bind:value={confirm}
+        aria-label="Confirm credential"
+        aria-invalid={setupShown && !!(setupErrors.confirm ?? setupErrors._root)}
+      />
+      {#if setupShown && (setupErrors.confirm ?? setupErrors._root)}<p class="field-error">
+          {setupErrors.confirm ?? setupErrors._root}
+        </p>{/if}
       <div class="row end">
-        <button class="button" disabled={creating || !verified} on:click={create}
+        <button class="button" disabled={setupBusy || !verified} on:click={create}
           >{creating ? 'Creating…' : 'Create profile'}</button
         >
       </div>

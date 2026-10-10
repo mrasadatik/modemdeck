@@ -21,6 +21,8 @@
   export let previewFallback = '';
   /** Called after the user picks a value. */
   export let onPick: (picked: string) => void = () => {};
+  /** Disables the preview button. */
+  export let disabled = false;
 
   let open = false;
   let filter = '';
@@ -81,6 +83,7 @@
     aria-haspopup="listbox"
     aria-expanded={open}
     aria-label={label}
+    {disabled}
     on:click={() => void setOpen(!open)}
   >
     <span class="preview-text">{preview}</span><span class="chevron" aria-hidden="true">▾</span>
