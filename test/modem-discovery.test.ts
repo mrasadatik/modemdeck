@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { ModemDiscovery } from '../src/application/modem-discovery.js';
+import { ModemDiscovery, portChange } from '../src/application/modem-discovery.js';
 import type { SerialTransportPort } from '../src/domain/ports/serial-transport.js';
 
 class FakeTransport implements SerialTransportPort {
@@ -90,4 +90,15 @@ test('discovery does not discard an unknown port that is the only AT responder',
   ).find();
   assert.equal(found.path, 'COM9');
   found.close();
+});
+
+test('port moves are reported only between distinct live ports', () => {
+  assert.deepEqual(portChange('', { connected: true, port: 'COM3' }), null);
+  assert.deepEqual(portChange('COM3', { connected: true, port: 'COM3' }), null);
+  assert.deepEqual(portChange('COM3', { connected: false, port: '' }), null);
+  assert.deepEqual(portChange('COM3', { connected: true, port: '' }), null);
+  assert.deepEqual(portChange('COM3', { connected: true, port: 'COM4' }), {
+    previous: 'COM3',
+    current: 'COM4',
+  });
 });

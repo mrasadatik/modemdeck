@@ -8,6 +8,37 @@ export type Command = (command: string, timeout?: number, data?: string) => Prom
 const error = (message: string, statusCode = 400): Error & { statusCode: number } =>
   Object.assign(new Error(message), { statusCode });
 
+/** Preferred order for message stores; MT (combined) first when present. */
+const STORE_ORDER = ['MT', 'SM', 'ME', 'SR'];
+
+/** Select a message store; single-param first (mem1 only), 3-param fallback. */
+export async function selectMessageStore(command: Command, store: string): Promise<void> {
+  try {
+    await command(`AT+CPMS="${store}"`);
+  } catch {
+    await command(`AT+CPMS="${store}","${store}","${store}"`);
+  }
+}
+
+/** Discover readable message stores; falls back to SM/ME when unreported. */
+export async function messageStores(command: Command): Promise<string[]> {
+  try {
+    const lines = await command('AT+CPMS=?', 8000);
+    const groups = [...lines.join(' ').matchAll(/\(([^)]*)\)/g)].map((match) =>
+      [...match[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map((token) => token[1]),
+    );
+    const reported = groups[0]?.length ? groups[0] : ['SM', 'ME'];
+    const ordered = [
+      ...STORE_ORDER.filter((store) => reported.includes(store)),
+      ...reported.filter((store) => !STORE_ORDER.includes(store)),
+    ];
+    if (ordered.length) return ordered;
+  } catch {
+    /* fall through to the default pair */
+  }
+  return ['SM', 'ME'];
+}
+
 export class SmsIngestionService {
   constructor(
     private readonly db: ModemDatabase,
@@ -51,11 +82,13 @@ export class SmsIngestionService {
     this.publish('sms', sms);
     return true;
   }
-  async import(command: Command): Promise<number> {
+  async import(command: Command): Promise<{ imported: number; perStore: Record<string, number> }> {
     let count = 0;
-    for (const store of ['SM', 'ME']) {
+    const perStore: Record<string, number> = {};
+    const stores = await messageStores(command);
+    for (const store of stores) {
       try {
-        await command(`AT+CPMS="${store}"`);
+        await selectMessageStore(command, store);
         const lines = await command('AT+CMGL=4', 30000);
         for (let index = 0; index < lines.length; index++)
           if (
@@ -64,6 +97,7 @@ export class SmsIngestionService {
             this.ingest(lines[index + 1])
           ) {
             count++;
+            perStore[store] = (perStore[store] ?? 0) + 1;
             const slot = Number(/\+CMGL:\s*(\d+)/.exec(lines[index])?.[1]);
             if (Number.isInteger(slot) && slot > 0)
               await command(`AT+CMGD=${slot}`).catch(() => {});
@@ -72,8 +106,22 @@ export class SmsIngestionService {
         /* optional storage is modem-specific */
       }
     }
-    await command('AT+CPMS="ME","ME","ME"').catch((): undefined => undefined);
-    return count;
+    if (stores[0]) await selectMessageStore(command, stores[0]).catch((): undefined => undefined);
+    return { imported: count, perStore };
+  }
+  /** Erase every discovered message store (ingest-then-purge partner). */
+  async purge(command: Command): Promise<Record<string, boolean>> {
+    const cleared: Record<string, boolean> = {};
+    for (const store of await messageStores(command)) {
+      try {
+        await selectMessageStore(command, store);
+        await command('AT+CMGD=1,4', 20000);
+        cleared[store] = true;
+      } catch {
+        cleared[store] = false;
+      }
+    }
+    return cleared;
   }
 }
 
@@ -191,39 +239,77 @@ export class PhonebookService {
       await this.command('AT+CSCS="IRA"').catch((): undefined => undefined);
     }
   }
+  /** Phonebook stores the modem reports; falls back to SM/ME when unreported. */
+  async stores(): Promise<string[]> {
+    try {
+      const lines = await this.command('AT+CPBS=?', 8000);
+      const reported = [...lines.join(' ').matchAll(/"([A-Za-z0-9_]+)"/g)].map((token) => token[1]);
+      if (reported.length) return reported;
+    } catch {
+      /* fall through to the default pair */
+    }
+    return ['SM', 'ME'];
+  }
   async read(store: string): Promise<Array<{ index: number; number: string; name: string }>> {
     return this.withStore(store, async () => {
       const range = (await this.command('AT+CPBR=?'))[0]?.match(/\((\d+)-(\d+)\)/);
-      const lines = await this.command(
-        `AT+CPBR=${range?.[1] || 1},${range?.[2] || 250}`,
-        30000,
-      ).catch((): string[] => []);
-      return lines.flatMap((line) => {
-        const match = line.match(/\+CPBR: (\d+),"([^"]*)",(\d+),"([^"]*)"/);
-        return match
-          ? [
-              {
-                index: Number(match[1]),
-                number: match[2],
-                name: Buffer.from(match[4], 'hex').swap16().toString('utf16le'),
-              },
-            ]
-          : [];
-      });
+      const start = Math.max(1, Number(range?.[1] || 1));
+      const end = Math.max(start, Number(range?.[2] || 250));
+      const out: Array<{ index: number; number: string; name: string }> = [];
+      // Wide ranges are rejected by many modems; page through in chunks.
+      for (let from = start; from <= end; from += 50) {
+        const lines = await this.command(
+          `AT+CPBR=${from},${Math.min(from + 49, end)}`,
+          30000,
+        ).catch((): string[] => []);
+        for (const entry of lines.flatMap((line) => parsePhonebookLine(line))) out.push(entry);
+      }
+      return out;
     });
   }
 }
 
+/** Tolerate modems that omit names or store them as plain text instead of UCS2. */
+export function parsePhonebookLine(
+  line: string,
+): Array<{ index: number; number: string; name: string }> {
+  const match = line.match(/\+CPBR: (\d+),"([^"]*)",(\d+)(?:,"([^"]*)")?/);
+  if (!match) return [];
+  const rawName = match[4] ?? '';
+  const name =
+    rawName && /^[0-9A-F]+$/i.test(rawName) && rawName.length % 2 === 0
+      ? Buffer.from(rawName, 'hex').swap16().toString('utf16le').replace(/\0+$/, '')
+      : rawName;
+  return [{ index: Number(match[1]), number: match[2], name }];
+}
+
+export interface ForwardingStatus {
+  reason: number;
+  active: boolean;
+  number: string;
+  /** Interrogation failure (timeout/unsupported) — distinct from inactive. */
+  error?: string;
+}
+
 export class ForwardingService {
   constructor(private readonly command: Command) {}
-  async read(): Promise<Array<{ reason: number; active: boolean; number: string }>> {
-    const result = [];
+  async read(): Promise<ForwardingStatus[]> {
+    const result: ForwardingStatus[] = [];
     for (const reason of [0, 1, 2, 3]) {
-      const lines = await this.command(`AT+CCFC=${reason},2`, 20000).catch((): string[] => []);
-      const match = lines
-        .map((line) => line.match(/\+CCFC: (\d),(\d+)(?:,"([^"]*)")?/))
-        .find((item) => item?.[1] === '1' && Number(item[2]) & 1);
-      result.push({ reason, active: Boolean(match), number: match?.[3] || '' });
+      try {
+        const lines = await this.command(`AT+CCFC=${reason},2`, 30000);
+        const match = lines
+          .map((line) => line.match(/\+CCFC:\s*(\d+)\s*,\s*(\d+)(?:,"([^"]*)")?/))
+          .find((item) => item?.[1] === '1' && Number(item[2]) & 1);
+        result.push({ reason, active: Boolean(match), number: match?.[3] || '' });
+      } catch (error) {
+        result.push({
+          reason,
+          active: false,
+          number: '',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return result;
   }

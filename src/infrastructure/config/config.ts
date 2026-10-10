@@ -87,7 +87,7 @@ export function loadConfig(rootDir: string, env: NodeJS.ProcessEnv = process.env
     captureRaw: false,
     capturePath: path.join(rootDir, 'data', 'traces', 'live.ndjson'),
     logPayloads: false,
-    lockMinutes: 0,
+    lockMinutes: 15,
     sessionMaxMinutes: 480,
     ...fileConfig,
   };

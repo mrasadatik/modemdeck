@@ -64,9 +64,23 @@ export function createSqliteRepository(
     { version: number } | undefined;
   if (!version) db.prepare('INSERT INTO schema_version(version) VALUES (?)').run(1);
 
+  // Prepared once and reused: short-lived statement handles are a
+  // finalization hazard on some runtimes.
+  const selectRecords = db.prepare('SELECT kind, id, payload FROM records');
+  const deleteRecords = db.prepare('DELETE FROM records');
+  const insertRecord = db.prepare(
+    'INSERT INTO records(kind,id,payload,created_at) VALUES (?,?,?,?)',
+  );
+  const deleteRetention = db.prepare(
+    "DELETE FROM records WHERE julianday(created_at) < julianday('now', ? || ' days')",
+  );
+  const insertAudit = db.prepare(
+    'INSERT INTO audit_events(action, correlation_id, detail, created_at) VALUES (?, ?, ?, ?)',
+  );
+
   const snapshot = structuredClone(defaults);
   const decodePayloads = (key: Buffer | null): void => {
-    const rows = db.prepare('SELECT kind, id, payload FROM records').all() as Array<{
+    const rows = selectRecords.all() as Array<{
       kind: string;
       id: string;
       payload: string;
@@ -99,71 +113,68 @@ export function createSqliteRepository(
     }
   };
   decodePayloads(options.getKey?.() ?? null);
+  const persistTransaction = db.transaction(() => {
+    const key = options.getKey?.();
+    deleteRecords.run();
+    const sensitive = options.persistSensitive === true;
+    const sms = snapshot.sms
+      .slice(0, 5000)
+      .map((item) => (sensitive ? item : { ...item, text: '[redacted]' }));
+    for (const item of sms)
+      insertRecord.run(
+        'sms',
+        item.id,
+        encryptText(options.getKey!()!, JSON.stringify(item)),
+        item.ts?.slice(0, 10),
+      );
+    for (const item of snapshot.sent.slice(0, 5000))
+      insertRecord.run(
+        'sent',
+        `${item.ts}-${item.to}`,
+        key
+          ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
+          : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
+        item.ts?.slice(0, 10),
+      );
+    for (const item of snapshot.calls.slice(0, 5000))
+      insertRecord.run(
+        'calls',
+        `${item.ts}-${item.number}`,
+        key ? encryptText(key, JSON.stringify(item)) : JSON.stringify(item),
+        item.ts?.slice(0, 10),
+      );
+    for (const item of snapshot.ussd.slice(0, 1000))
+      insertRecord.run(
+        'ussd',
+        `${item.ts}-${item.code}`,
+        key
+          ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
+          : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
+        item.ts?.slice(0, 10),
+      );
+    for (const item of snapshot.contacts.slice(0, 5000))
+      insertRecord.run(
+        'contact',
+        `${item.simId ?? ''}-${item.index}`,
+        key ? encryptText(options.getKey!()!, JSON.stringify(item)) : JSON.stringify(item),
+        new Date().toISOString(),
+      );
+    for (const id of Object.keys(snapshot.seen).slice(-10000))
+      insertRecord.run('seen', id, '1', new Date().toISOString().slice(0, 10));
+    for (const [id, value] of Object.entries(snapshot.parts))
+      insertRecord.run(
+        'part',
+        id,
+        key ? encryptText(key, JSON.stringify(value)) : JSON.stringify(value),
+        new Date().toISOString(),
+      );
+    if (options.retentionDays && options.retentionDays > 0) {
+      deleteRetention.run(`-${Math.floor(options.retentionDays)}`);
+    }
+  });
   const persist = (): void => {
     if (!options.getKey?.()) return; // locked: never write plaintext or wipe stored ciphertext
-    const transaction = db.transaction(() => {
-      const key = options.getKey?.();
-      db.prepare('DELETE FROM records').run();
-      const insert = db.prepare('INSERT INTO records(kind,id,payload,created_at) VALUES (?,?,?,?)');
-      const sensitive = options.persistSensitive === true;
-      const sms = snapshot.sms
-        .slice(0, 5000)
-        .map((item) => (sensitive ? item : { ...item, text: '[redacted]' }));
-      for (const item of sms)
-        insert.run(
-          'sms',
-          item.id,
-          encryptText(options.getKey!()!, JSON.stringify(item)),
-          item.ts?.slice(0, 10),
-        );
-      for (const item of snapshot.sent.slice(0, 5000))
-        insert.run(
-          'sent',
-          `${item.ts}-${item.to}`,
-          key
-            ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
-            : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
-          item.ts?.slice(0, 10),
-        );
-      for (const item of snapshot.calls.slice(0, 5000))
-        insert.run(
-          'calls',
-          `${item.ts}-${item.number}`,
-          key ? encryptText(key, JSON.stringify(item)) : JSON.stringify(item),
-          item.ts?.slice(0, 10),
-        );
-      for (const item of snapshot.ussd.slice(0, 1000))
-        insert.run(
-          'ussd',
-          `${item.ts}-${item.code}`,
-          key
-            ? encryptText(key, JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }))
-            : JSON.stringify(sensitive ? item : { ...item, text: '[redacted]' }),
-          item.ts?.slice(0, 10),
-        );
-      for (const item of snapshot.contacts.slice(0, 5000))
-        insert.run(
-          'contact',
-          `${item.simId ?? ''}-${item.index}`,
-          key ? encryptText(options.getKey!()!, JSON.stringify(item)) : JSON.stringify(item),
-          new Date().toISOString(),
-        );
-      for (const id of Object.keys(snapshot.seen).slice(-10000))
-        insert.run('seen', id, '1', new Date().toISOString().slice(0, 10));
-      for (const [id, value] of Object.entries(snapshot.parts))
-        insert.run(
-          'part',
-          id,
-          key ? encryptText(key, JSON.stringify(value)) : JSON.stringify(value),
-          new Date().toISOString(),
-        );
-      if (options.retentionDays && options.retentionDays > 0) {
-        db.prepare(
-          "DELETE FROM records WHERE julianday(created_at) < julianday('now', ? || ' days')",
-        ).run(`-${Math.floor(options.retentionDays)}`);
-      }
-    });
-    transaction();
+    persistTransaction();
   };
   persist();
   const repository: Repository<ModemDatabase> & { close: () => void } = {
@@ -201,9 +212,7 @@ export function createSqliteRepository(
     },
     audit: async (event) => {
       const key = options.getKey?.();
-      db.prepare(
-        'INSERT INTO audit_events(action, correlation_id, detail, created_at) VALUES (?, ?, ?, ?)',
-      ).run(
+      insertAudit.run(
         event.action,
         event.correlationId || null,
         event.detail && key

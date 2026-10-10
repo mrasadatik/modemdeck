@@ -54,30 +54,30 @@ export function decodePdu(hex: string): DecodedPdu | null {
   let p = 1 + bytes[0];
   if (p + 1 > bytes.length) return null;
   const flags = bytes[p++];
-  if ((flags & 3) !== 0) return null;
+  const mti = flags & 3;
+  // SMS-DELIVER (0) is the common path; SMS-SUBMIT (1, stored sent mail) and
+  // SMS-STATUS-REPORT (2, delivery receipts) appear in modem/SIM storage too.
+  if (mti !== 0 && mti !== 1 && mti !== 2) return null;
+  if (mti === 2) return decodeStatusReport(bytes, p);
+  if (mti === 1) {
+    p++; // SMS-SUBMIT carries a message reference octet here; DELIVER does not.
+    if (p >= bytes.length) return null;
+  }
   const addressLength = bytes[p++];
   if (p + 2 > bytes.length) return null;
   const type = bytes[p++],
     addressBytes = Math.ceil(addressLength / 2);
-  if (p + addressBytes + 10 > bytes.length) return null;
-  let from;
-  if (((type >> 4) & 7) === 5)
-    from = g7(unpack7(bytes.subarray(p, p + addressBytes), Math.floor((addressLength * 4) / 7)));
-  else {
-    let digits = '';
-    for (let i = 0; i < addressBytes; i++)
-      digits += (bytes[p + i] & 15).toString(16) + (bytes[p + i] >> 4).toString(16);
-    from = (((type >> 4) & 7) === 1 ? '+' : '') + digits.replace(/f/gi, '').slice(0, addressLength);
-  }
+  if (p + addressBytes > bytes.length) return null;
+  const from = decodeAddress(bytes, p, addressLength, type, addressBytes);
   p += addressBytes;
+  if (mti === 1) return decodeSubmit(bytes, p, from, flags);
   if (p + 10 > bytes.length) return null;
   p++;
   const dcs = bytes[p++],
     timestamp = bytes.subarray(p, p + 7);
   p += 7;
-  const tz = timestamp[6],
-    quarterHours = (tz & 7) * 10 + (tz >> 4);
-  const ts = `20${pad(swap(timestamp[0]))}-${pad(swap(timestamp[1]))}-${pad(swap(timestamp[2]))}T${pad(swap(timestamp[3]))}:${pad(swap(timestamp[4]))}:${pad(swap(timestamp[5]))}${tz & 8 ? '-' : '+'}${pad(Math.floor(quarterHours / 4))}:${pad((quarterHours % 4) * 15)}`;
+  const ts = decodeTimestamp(timestamp);
+  if (!ts) return null;
   const userLength = bytes[p++],
     userData = bytes.subarray(p);
   if (userLength > userData.length) return null;
@@ -86,41 +86,153 @@ export function decodePdu(hex: string): DecodedPdu | null {
     total = 1,
     headerBytes = 0;
   if (flags & 0x40) {
-    const length = userData[0];
-    headerBytes = length + 1;
-    for (let i = 1; i < length && i + 2 <= (userData[0] ?? 0);) {
-      const id = userData[i],
-        size = userData[i + 1];
-      if (size === undefined || i + 2 + size > userData.length) break;
-      if (id === 0) {
-        ref = userData[i + 2];
-        total = userData[i + 3];
-        seq = userData[i + 4];
-      } else if (id === 8) {
-        ref = (userData[i + 2] << 8) | userData[i + 3];
-        total = userData[i + 4];
-        seq = userData[i + 5];
-      }
-      i += 2 + size;
-    }
+    const parsed = parseConcatHeader(userData);
+    ref = parsed.ref;
+    seq = parsed.seq;
+    total = parsed.total;
+    headerBytes = parsed.headerBytes;
   }
-  let text;
+  const text = decodeUserData(userData, userLength, headerBytes, dcs);
+  return { from, ts, text, ref, seq, total };
+}
+
+function decodeAddress(
+  bytes: Buffer,
+  p: number,
+  addressLength: number,
+  type: number,
+  addressBytes: number,
+): string {
+  if (((type >> 4) & 7) === 5)
+    return g7(unpack7(bytes.subarray(p, p + addressBytes), Math.floor((addressLength * 4) / 7)));
+  let digits = '';
+  for (let i = 0; i < addressBytes; i++)
+    digits += (bytes[p + i] & 15).toString(16) + (bytes[p + i] >> 4).toString(16);
+  return (((type >> 4) & 7) === 1 ? '+' : '') + digits.replace(/f/gi, '').slice(0, addressLength);
+}
+
+function decodeTimestamp(timestamp: Buffer): string | null {
+  if (timestamp.length < 7) return null;
+  const tz = timestamp[6],
+    quarterHours = (tz & 7) * 10 + (tz >> 4);
+  return `20${pad(swap(timestamp[0]))}-${pad(swap(timestamp[1]))}-${pad(swap(timestamp[2]))}T${pad(swap(timestamp[3]))}:${pad(swap(timestamp[4]))}:${pad(swap(timestamp[5]))}${tz & 8 ? '-' : '+'}${pad(Math.floor(quarterHours / 4))}:${pad((quarterHours % 4) * 15)}`;
+}
+
+function parseConcatHeader(userData: Buffer): {
+  ref: number;
+  seq: number;
+  total: number;
+  headerBytes: number;
+} {
+  let ref = 0,
+    seq = 1,
+    total = 1,
+    headerBytes = 0;
+  const length = userData[0];
+  headerBytes = length + 1;
+  for (let i = 1; i < length && i + 2 <= (userData[0] ?? 0);) {
+    const id = userData[i],
+      size = userData[i + 1];
+    if (size === undefined || i + 2 + size > userData.length) break;
+    if (id === 0) {
+      ref = userData[i + 2];
+      total = userData[i + 3];
+      seq = userData[i + 4];
+    } else if (id === 8) {
+      ref = (userData[i + 2] << 8) | userData[i + 3];
+      total = userData[i + 4];
+      seq = userData[i + 5];
+    }
+    i += 2 + size;
+  }
+  return { ref, seq, total, headerBytes };
+}
+
+function decodeUserData(
+  userData: Buffer,
+  userLength: number,
+  headerBytes: number,
+  dcs: number,
+): string {
   if ((dcs & 12) === 8) {
     const unicode = Buffer.from(userData.subarray(headerBytes, userLength));
-    text = unicode
+    return unicode
       .subarray(0, unicode.length & ~1)
       .swap16()
       .toString('utf16le');
-  } else if ((dcs & 12) === 4) text = userData.subarray(headerBytes, userLength).toString('latin1');
-  else
-    text = g7(
-      unpack7(
-        userData,
-        Math.max(0, userLength - Math.ceil((headerBytes * 8) / 7)),
-        headerBytes * 8,
-      ),
-    );
-  return { from, ts, text, ref, seq, total };
+  }
+  if ((dcs & 12) === 4) return userData.subarray(headerBytes, userLength).toString('latin1');
+  return g7(
+    unpack7(userData, Math.max(0, userLength - Math.ceil((headerBytes * 8) / 7)), headerBytes * 8),
+  );
+}
+
+/** SMS-SUBMIT as stored by other devices (sent mail kept on SIM/modem). No timestamp on the air. */
+function decodeSubmit(bytes: Buffer, p: number, from: string, flags: number): DecodedPdu | null {
+  p++;
+  const dcs = bytes[p++];
+  let vpLength = 0;
+  const vpf = (flags >> 3) & 3;
+  if (vpf === 2) vpLength = 1;
+  else if (vpf === 3) vpLength = 7;
+  p += vpLength;
+  if (p >= bytes.length) return null;
+  const userLength = bytes[p++],
+    userData = bytes.subarray(p);
+  if (userLength > userData.length) return null;
+  let ref = 0,
+    seq = 1,
+    total = 1,
+    headerBytes = 0;
+  if (flags & 0x40) {
+    const parsed = parseConcatHeader(userData);
+    ref = parsed.ref;
+    seq = parsed.seq;
+    total = parsed.total;
+    headerBytes = parsed.headerBytes;
+  }
+  const text = decodeUserData(userData, userLength, headerBytes, dcs);
+  return { from, ts: '', text, ref, seq, total };
+}
+
+const STATUS_WORDS: Record<number, string> = {
+  0: 'delivered',
+  1: 'forwarded, destination unreachable',
+  2: 'forwarded, destination unknown',
+  4: 'forwarded, destination absent (retrying)',
+  16: 'forwarded',
+  32: 'memory capacity exceeded',
+  33: 'protocol error',
+  64: 'expired',
+  96: 'deleted by sender',
+};
+
+/** SMS-STATUS-REPORT (delivery receipts kept in SR storage). */
+function decodeStatusReport(bytes: Buffer, p: number): DecodedPdu | null {
+  p++;
+  const addressLength = bytes[p++];
+  if (p + 2 > bytes.length) return null;
+  const type = bytes[p++],
+    addressBytes = Math.ceil(addressLength / 2);
+  if (p + addressBytes + 15 > bytes.length) return null;
+  const from = decodeAddress(bytes, p, addressLength, type, addressBytes);
+  p += addressBytes;
+  const ts = decodeTimestamp(bytes.subarray(p, p + 7));
+  if (!ts) return null;
+  p += 7;
+  const deliveredAt = decodeTimestamp(bytes.subarray(p, p + 7));
+  p += 7;
+  if (p >= bytes.length) return null;
+  const status = bytes[p],
+    word = STATUS_WORDS[status] ?? `status ${status}`;
+  return {
+    from,
+    ts,
+    text: `Delivery report: ${word}${deliveredAt ? ` at ${deliveredAt}` : ''}.`,
+    ref: 0,
+    seq: 1,
+    total: 1,
+  };
 }
 
 function address(number: string): Buffer {

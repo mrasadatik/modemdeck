@@ -9,10 +9,12 @@ class FakeTransport extends EventEmitter {
   readonly path = 'COM7';
   isOpen = true;
   disconnectOnWrite = false;
+  answerError = false;
   write(): void {
     setImmediate(() => {
       if (this.disconnectOnWrite) this.close();
-      else if (this.isOpen) this.emit('data', Buffer.from('OK\r\n'));
+      else if (this.isOpen)
+        this.emit('data', Buffer.from(this.answerError ? 'ERROR\r\n' : 'OK\r\n'));
     });
   }
   close(): void {
@@ -137,6 +139,113 @@ test('retries discovery and reports disconnect and reconnection', async () => {
       changes.map((change) => change.connected),
       [false, true, false, true],
     );
+  } finally {
+    await lifecycle.stop();
+  }
+});
+
+test('heartbeat keeps a silently live modem connected', async () => {
+  const status = {
+    connected: false,
+    port: '',
+    error: '',
+    capabilities: {} as Record<string, boolean>,
+  };
+  const transport = new FakeTransport();
+  const lifecycle = new ModemLifecycle(
+    '',
+    115200,
+    status,
+    async () => undefined,
+    async () => undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async (): Promise<SerialTransportPort> => transport as unknown as SerialTransportPort,
+    { intervalMs: 30 },
+  );
+  try {
+    await lifecycle.start();
+    await until(() => status.connected);
+    const port = status.port;
+    await delay(150);
+    assert.equal(status.connected, true);
+    assert.equal(status.port, port);
+    assert.equal(status.error, '');
+  } finally {
+    await lifecycle.stop();
+  }
+});
+
+test('heartbeat drops a modem that stops answering and reconnects', async () => {
+  const status = {
+    connected: false,
+    port: '',
+    error: '',
+    capabilities: {} as Record<string, boolean>,
+  };
+  const transport = new FakeTransport();
+  const lifecycle = new ModemLifecycle(
+    '',
+    115200,
+    status,
+    async () => undefined,
+    async () => undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async (): Promise<SerialTransportPort> => transport as unknown as SerialTransportPort,
+    { intervalMs: 30 },
+  );
+  try {
+    await lifecycle.start();
+    await until(() => status.connected);
+    transport.answerError = true;
+    await until(() => !status.connected);
+    assert.match(status.error, /disconnected/i);
+    transport.answerError = false;
+    transport.isOpen = true;
+    await until(() => status.connected);
+  } finally {
+    await lifecycle.stop();
+  }
+});
+
+test('lifecycle retains the last connected port across drops', async () => {
+  const status = {
+    connected: false,
+    port: '',
+    lastPort: '',
+    error: '',
+    capabilities: {} as Record<string, boolean>,
+  };
+  const transport = new FakeTransport();
+  const lifecycle = new ModemLifecycle(
+    '',
+    115200,
+    status,
+    async () => undefined,
+    async () => undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async (): Promise<SerialTransportPort> => transport as unknown as SerialTransportPort,
+    { intervalMs: 30 },
+  );
+  try {
+    await lifecycle.start();
+    await until(() => status.connected);
+    assert.equal(status.port, 'COM7');
+    transport.close();
+    await until(() => !status.connected);
+    assert.equal(status.port, '');
+    assert.equal(status.lastPort, 'COM7');
   } finally {
     await lifecycle.stop();
   }

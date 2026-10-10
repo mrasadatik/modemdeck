@@ -1,6 +1,13 @@
 import { SerialPort } from 'serialport';
+import { withTimeout } from '../infrastructure/async.js';
 const port = process.env.MODEMDECK_PORT || process.argv[2] || '';
-const ports = await SerialPort.list();
+const ports = await withTimeout(SerialPort.list(), 8000, 'serial listing timed out').catch(
+  (): Awaited<ReturnType<typeof SerialPort.list>> => {
+    console.error('SKIP: serial listing hung; no hardware behavior was tested.');
+    process.exitCode = 2;
+    return [];
+  },
+);
 if (!port && ports.length === 0) {
   console.error('SKIP: no serial ports are present; no hardware behavior was tested.');
   process.exitCode = 2;

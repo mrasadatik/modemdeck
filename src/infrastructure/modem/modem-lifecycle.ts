@@ -1,6 +1,7 @@
 import { SerialPort } from 'serialport';
 import type { SerialTransportPort } from '../../domain/ports/serial-transport.js';
 import { createSerialTransport } from '../serial/serial-transport.js';
+import { withTimeout } from '../async.js';
 import { AtCommandEngine } from '../at/at-engine.js';
 import { ModemService } from '../../application/modem-service.js';
 import { createSmsCodec } from '../../domain/services/sms-codec.js';
@@ -12,6 +13,8 @@ import type { PlatformModem } from '../platform/modem-provider.js';
 export interface LifecycleStatus {
   connected: boolean;
   port: string;
+  /** Most recent connected port, retained across drops for diagnostics. */
+  lastPort?: string;
   error: string;
   capabilities: Record<string, boolean>;
   capabilityEvidence?: unknown;
@@ -30,6 +33,9 @@ export class ModemLifecycle {
   private connecting = false;
   private delay = 1000;
   private stopping = false;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private beating = false;
+  private readonly heartbeatIntervalMs: number;
   constructor(
     private port: string,
     private baud: number,
@@ -42,7 +48,10 @@ export class ModemLifecycle {
     private readonly platformModems?: () => Promise<PlatformModem[]>,
     private readonly onStatusChange?: () => void,
     private readonly findTransport?: () => Promise<SerialTransportPort>,
-  ) {}
+    heartbeat?: { intervalMs?: number },
+  ) {
+    this.heartbeatIntervalMs = heartbeat?.intervalMs ?? 10000;
+  }
   async command(command: string, timeout = 8000, data?: string): Promise<string[]> {
     if (!this.engine) throw new Error('modem not connected');
     this.interaction?.('command', command, data, /CMGS|CUSD|CPBW|CCFC/i.test(command));
@@ -71,6 +80,7 @@ export class ModemLifecycle {
     this.stopping = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.stopHeartbeat();
     this.engine?.disconnect(new Error('modem reconfiguring'));
     try {
       this.transport?.close();
@@ -93,6 +103,7 @@ export class ModemLifecycle {
     this.stopping = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.stopHeartbeat();
     this.engine?.disconnect(new Error('server shutting down'));
     try {
       this.transport?.close();
@@ -105,6 +116,7 @@ export class ModemLifecycle {
     this.disconnected('');
   }
   private disconnected(error: string): void {
+    if (this.status.port) this.status.lastPort = this.status.port;
     this.status.connected = false;
     this.status.port = '';
     this.status.error = error;
@@ -128,7 +140,19 @@ export class ModemLifecycle {
     try {
       const discovery = new ModemDiscovery(
         async () => {
-          const listed = (await SerialPort.list()).map((item) => ({
+          // A wedged USB stack can hang enumeration forever; fall back to
+          // provider-known modems so discovery keeps moving and retrying.
+          const listed = (
+            await withTimeout(SerialPort.list(), 8000, 'serial listing timed out').catch(
+              (): Array<{
+                path: string;
+                friendlyName?: string;
+                manufacturer?: string;
+                vendorId?: string;
+                productId?: string;
+              }> => [],
+            )
+          ).map((item) => ({
             path: item.path,
             friendlyName: (item as unknown as { friendlyName?: string }).friendlyName,
             manufacturer: item.manufacturer,
@@ -213,6 +237,7 @@ export class ModemLifecycle {
       this.status.connected = true;
       this.status.error = '';
       this.delay = 1000;
+      this.startHeartbeat();
       this.onStatusChange?.();
       await this.onReady();
     } catch (reason) {
@@ -234,8 +259,36 @@ export class ModemLifecycle {
       if (!this.transport) this.schedule();
     }
   }
+  /**
+   * Presence heartbeat: a bare AT every interval catches drops the OS never
+   * reports (wedged handles, suspend/resume, flaky USB power) and fails over
+   * to the reconnect backoff. Bypasses the interaction log to avoid chatter.
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      void this.beat();
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
+  }
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+  private async beat(): Promise<void> {
+    if (this.stopping || this.beating || !this.transport || !this.engine) return;
+    this.beating = true;
+    try {
+      await this.engine.execute('AT', 5000);
+    } catch {
+      this.lost();
+    } finally {
+      this.beating = false;
+    }
+  }
   private lost(): void {
     if (!this.transport || this.stopping) return;
+    this.stopHeartbeat();
     this.engine?.disconnect();
     try {
       this.transport.close();

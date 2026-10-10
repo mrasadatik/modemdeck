@@ -82,3 +82,17 @@ const score = (port: DiscoveredPort): number => {
   if (/\b(modem|at command|data)\b/.test(label)) return 50;
   return 0;
 };
+
+/**
+ * Detect a modem port move between status reports (USB re-enumeration often
+ * reassigns COM ports). Returns the previous/current pair only when a live
+ * connection lands on a different port than the last known one.
+ */
+export function portChange(
+  previous: string,
+  status: { connected: boolean; port: string },
+): { previous: string; current: string } | null {
+  if (!status.connected || !status.port) return null;
+  if (!previous || previous === status.port) return null;
+  return { previous, current: status.port };
+}

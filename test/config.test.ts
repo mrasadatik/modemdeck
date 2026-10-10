@@ -73,6 +73,17 @@ test('configuration rejects malformed persisted types', () => {
   }
 });
 
+test('auto-lock is enabled by default', () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modemdeck-config-'));
+  try {
+    const config = loadConfig(rootDir, {});
+    assert.equal(config.lockMinutes, 15);
+    assert.equal(config.sessionMaxMinutes, 480);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('configuration writes a valid replacement file atomically', () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modemdeck-config-'));
   try {

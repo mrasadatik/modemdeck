@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import selfsigned from 'selfsigned';
 import type { ApiBody, ApiRoutes } from './api-router.js';
-import { createApiRouter } from './api-router.js';
+import { SESSION_COOKIE, SESSION_ENVELOPE, createApiRouter } from './api-router.js';
 import type { SseHub } from './sse-hub.js';
 
 export interface HttpAdapterOptions {
@@ -15,6 +15,17 @@ export interface HttpAdapterOptions {
   routes: ApiRoutes;
   sse: SseHub;
   https?: boolean;
+  /** Returns true when the session id may bootstrap a browser cookie. */
+  validateSessionId?: (id: string) => boolean;
+}
+/** Extract the presenting session id from header or cookie. */
+export function sessionIdFromRequest(req: http.IncomingMessage): string | undefined {
+  const header = req.headers['x-session-id'];
+  if (typeof header === 'string' && /^[a-f0-9]{32}$/.test(header)) return header;
+  const cookie = req.headers.cookie?.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
+  if (cookie && /^[a-f0-9]{32}$/.test(decodeURIComponent(cookie)))
+    return decodeURIComponent(cookie);
+  return undefined;
 }
 export class HttpServerAdapter {
   private readonly server: http.Server | https.Server;
@@ -45,6 +56,12 @@ export class HttpServerAdapter {
         if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || ''))
           return json(403, { error: 'bad host' });
         const url = new URL(req.url || '/', 'http://localhost');
+        const sessionId = sessionIdFromRequest(req);
+        const sessionBootstrap =
+          req.method === 'GET' &&
+          url.pathname === '/' &&
+          typeof url.searchParams.get('sid') === 'string' &&
+          (options.validateSessionId?.(url.searchParams.get('sid') as string) ?? false);
         const bootstrap =
           req.method === 'GET' &&
           url.pathname === '/' &&
@@ -64,6 +81,9 @@ export class HttpServerAdapter {
           if (bootstrap)
             headers['set-cookie'] =
               `modemdeck_session=${encodeURIComponent(this.options.token || '')}; HttpOnly; SameSite=Strict; Path=/`;
+          if (sessionBootstrap)
+            headers['set-cookie'] =
+              `${SESSION_COOKIE}=${encodeURIComponent(url.searchParams.get('sid') as string)}; HttpOnly; SameSite=Strict; Path=/`;
           res.writeHead(200, headers);
           return res.end(fs.readFileSync(path.join(options.rootDir, 'public', 'index.html')));
         }
@@ -122,11 +142,12 @@ export class HttpServerAdapter {
         const key = `${req.method} ${url.pathname}`;
         if (!options.routes[key]) return json(404, { error: 'not found' });
         const invoke = (): Promise<unknown> =>
-          dispatch(req.method || 'GET', url.pathname, body, url.searchParams);
+          dispatch(req.method || 'GET', url.pathname, body, url.searchParams, { sessionId });
         const modem = ![
           'GET /api/state',
           'POST /api/sms/delete',
           'GET /api/data',
+          'GET /api/ports',
           'GET /health',
         ].includes(key);
         const result = modem ? this.lock.then(invoke, invoke) : invoke();
@@ -135,7 +156,29 @@ export class HttpServerAdapter {
             (): undefined => undefined,
             (): undefined => undefined,
           );
-        return json(200, await result);
+        const value = (await result) as Record<string, unknown> | null;
+        // Auth routes return a session envelope; turn it into an HttpOnly
+        // cookie and strip it before serializing.
+        const envelope =
+          value && typeof value === 'object'
+            ? (value as Record<string, unknown>)[SESSION_ENVELOPE]
+            : undefined;
+        if (envelope && typeof envelope === 'object') {
+          const directive = envelope as { set?: unknown; clear?: unknown };
+          if (typeof directive.set === 'string') {
+            res.setHeader(
+              'Set-Cookie',
+              `${SESSION_COOKIE}=${encodeURIComponent(directive.set)}; HttpOnly; SameSite=Strict; Path=/`,
+            );
+          } else if (directive.clear === true) {
+            res.setHeader(
+              'Set-Cookie',
+              `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+            );
+          }
+          delete (value as Record<string, unknown>)[SESSION_ENVELOPE];
+        }
+        return json(200, value);
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         const status =

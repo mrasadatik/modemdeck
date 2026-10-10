@@ -2,24 +2,37 @@ import type { ApiBody, ApiRoutes } from './api-router.js';
 import type { ModemDatabase, UssdResult } from '../../domain/entities/types.js';
 import type { LifecycleStatus } from '../../infrastructure/modem/modem-lifecycle.js';
 import type { Command } from '../../application/modem-services.js';
+import {
+  apnName,
+  atCommand,
+  contactName,
+  dataToggle,
+  forwardingReason,
+  messageId,
+  parseField,
+  phoneE164,
+  phonebookIndex,
+  phonebookStore,
+  smsText,
+  ussdCode,
+} from '../../domain/validation/schemas.js';
 
 interface ModemRouteDependencies {
   db: ModemDatabase;
   status: LifecycleStatus;
   clean: (value: unknown) => string;
-  storeName: (value: unknown) => string;
-  validatePhone: (value: string) => boolean;
-  normalizePhone: (value: string) => string | null;
-  validateUssd: (value: string) => boolean;
+  phoneCountry: () => string | undefined;
   sendSms: (to: string, text: string) => Promise<number>;
   save: () => Promise<void>;
-  importAll: () => Promise<number>;
+  importAll: () => Promise<{ imported: number; perStore: Record<string, number> }>;
+  purgeAll: () => Promise<Record<string, boolean>>;
   ussd: (code: string) => Promise<UssdResult>;
   network: () => Promise<Record<string, unknown>>;
   pbRead: (store: string) => Promise<Array<{ index: number; number: string; name: string }>>;
+  pbStores: () => Promise<string[]>;
   pb: <T>(store: string, action: () => Promise<T>) => Promise<T>;
   hx: (value: unknown) => string;
-  fwdGet: () => Promise<Array<{ reason: number; active: boolean; number: string }>>;
+  fwdGet: () => Promise<Array<{ reason: number; active: boolean; number: string; error?: string }>>;
   dataState: () => Promise<Record<string, unknown>>;
   setData: (on: boolean) => Promise<Record<string, unknown>>;
   at: Command;
@@ -33,16 +46,15 @@ export function createModemRoutes({
   db,
   status,
   clean,
-  storeName,
-  validatePhone,
-  normalizePhone,
-  validateUssd,
+  phoneCountry,
   sendSms,
   save,
   importAll,
+  purgeAll,
   ussd,
   network,
   pbRead,
+  pbStores,
   pb,
   hx,
   fwdGet,
@@ -59,13 +71,8 @@ export function createModemRoutes({
     return value;
   };
   /** Strictly validate then canonicalize to E.164; throws 400 otherwise. */
-  const e164 = (raw: string, field: string): string => {
-    if (!validatePhone(raw))
-      throw Object.assign(new Error(`invalid ${field}`), { statusCode: 400 });
-    const normalized = normalizePhone(raw);
-    if (!normalized) throw Object.assign(new Error(`invalid ${field}`), { statusCode: 400 });
-    return normalized;
-  };
+  const e164 = (raw: unknown, message: string): string =>
+    parseField(phoneE164(phoneCountry(), message), raw);
   return {
     'GET /health': async () => ({
       ok: true,
@@ -92,12 +99,8 @@ export function createModemRoutes({
     'GET /api/config': async () => config(),
     'POST /api/config': async (b: ApiBody) => updateConfig(b),
     'POST /api/sms': async (b: ApiBody) => {
-      const to = e164(clean(text(b.to, 'to')), 'destination number');
-      const message = text(b.text, 'text');
-      if (!message || [...message].length > 2000)
-        throw Object.assign(new Error('message must contain 1-2000 characters'), {
-          statusCode: 400,
-        });
+      const to = e164(clean(text(b.to, 'to')), 'invalid destination number');
+      const message = parseField(smsText(), text(b.text, 'text'));
       const n = await sendSms(to, message);
       const s = { to, text: message, ts: new Date().toISOString(), parts: n, simId: getSimId?.() };
       db.sent.unshift(s);
@@ -105,26 +108,22 @@ export function createModemRoutes({
       return s;
     },
     'POST /api/sms/delete': async (b: ApiBody) => {
-      if (!/^[a-f0-9]{12}$/i.test(String(b.id || '')))
-        throw Object.assign(new Error('invalid message id'), { statusCode: 400 });
+      parseField(messageId(), b.id);
       db.sms = db.sms.filter((x) => x.id !== b.id);
       await save();
       return { ok: 1 };
     },
-    'POST /api/sync': async () => ({ imported: await importAll() }),
+    'POST /api/sync': async () => {
+      const result = await importAll();
+      return { imported: result.imported, perStore: result.perStore };
+    },
     'POST /api/purge': async () => {
-      await importAll();
-      for (const s of ['SM', 'ME']) {
-        await at(`AT+CPMS="${s}","${s}","${s}"`).catch(() => {});
-        await at('AT+CMGD=1,4', 20000).catch(() => {});
-      }
-      await at('AT+CPMS="ME","ME","ME"').catch(() => {});
-      return { ok: 1 };
+      const result = await importAll();
+      const cleared = await purgeAll();
+      return { ok: 1, imported: result.imported, perStore: result.perStore, cleared };
     },
     'POST /api/ussd': async (b: ApiBody) => {
-      const code = clean(text(b.code, 'code'));
-      if (!validateUssd(code))
-        throw Object.assign(new Error('invalid USSD code'), { statusCode: 400 });
+      const code = parseField(ussdCode(), clean(text(b.code, 'code')));
       const r = await ussd(code);
       db.ussd.unshift({ code, ...r, ts: new Date().toISOString(), simId: getSimId?.() });
       await save();
@@ -135,8 +134,9 @@ export function createModemRoutes({
       return { ok: 1 };
     },
     'GET /api/network': network,
-    'GET /api/phonebook': async (_: ApiBody, p: URLSearchParams) => {
-      const simEntries = await pbRead(storeName(p.get('store') || 'SM'));
+    'GET /api/phonebook/stores': async () => ({ stores: await pbStores() }),
+    'GET /api/phonebook': async (_: ApiBody, p?: URLSearchParams) => {
+      const simEntries = await pbRead(parseField(phonebookStore(), p?.get('store') || 'SM'));
       const app = getSimId?.() ? db.contacts.filter((c) => c.simId === getSimId()) : db.contacts;
       return [
         ...simEntries.map((c) => ({ ...c, source: 'sim' }) as const),
@@ -147,10 +147,8 @@ export function createModemRoutes({
     },
     'POST /api/phonebook': async (b: ApiBody) => {
       if (b.dest === 'app') {
-        const number = e164(clean(b.number), 'phone number');
-        const name = String(b.name || '');
-        if (!name || [...name].length > 80)
-          throw Object.assign(new Error('invalid contact name'), { statusCode: 400 });
+        const number = e164(clean(b.number), 'invalid phone number');
+        const name = parseField(contactName(), b.name);
         const next = db.contacts.length ? Math.max(...db.contacts.map((c) => c.index)) + 1 : 1;
         db.contacts.unshift({
           index: b.index ? Number(b.index) : next,
@@ -161,14 +159,10 @@ export function createModemRoutes({
         await save();
         return { ok: 1, source: 'app' };
       }
-      return pb(storeName(b.store), async () => {
-        const number = e164(clean(b.number), 'phone number');
-        const name = String(b.name || '');
-        if (!name || [...name].length > 80)
-          throw Object.assign(new Error('invalid contact name'), { statusCode: 400 });
-        const index = b.index === '' || b.index == null ? '' : Number(b.index);
-        if (index !== '' && (!Number.isInteger(index) || index < 1 || index > 9999))
-          throw Object.assign(new Error('invalid phonebook index'), { statusCode: 400 });
+      return pb(parseField(phonebookStore(), b.store), async () => {
+        const number = e164(clean(b.number), 'invalid phone number');
+        const name = parseField(contactName(), b.name);
+        const index = parseField(phonebookIndex(), b.index);
         await at(
           `AT+CPBW=${index},"${number}",${number.startsWith('+') ? 145 : 129},"${hx(name)}"`,
         );
@@ -182,9 +176,9 @@ export function createModemRoutes({
         await save();
         return { ok: 1 };
       }
-      return pb(storeName(b.store), async () => {
-        const index = Number(b.index);
-        if (!Number.isInteger(index) || index < 1 || index > 9999)
+      return pb(parseField(phonebookStore(), b.store), async () => {
+        const index = parseField(phonebookIndex(), b.index);
+        if (index === '')
           throw Object.assign(new Error('invalid phonebook index'), { statusCode: 400 });
         await at(`AT+CPBW=${index}`);
         return { ok: 1 };
@@ -192,10 +186,8 @@ export function createModemRoutes({
     },
     'GET /api/forwarding': async () => fwdGet(),
     'POST /api/forwarding': async (b: ApiBody) => {
-      const reason = Number(b.reason);
-      const n = b.on ? e164(clean(b.number), 'forwarding number') : '';
-      if (!Number.isInteger(reason) || reason < 0 || reason > 3)
-        throw Object.assign(new Error('invalid forwarding request'), { statusCode: 400 });
+      const reason = parseField(forwardingReason(), b.reason);
+      const n = b.on ? e164(clean(b.number), 'invalid forwarding request') : '';
       await at(
         `AT+CCFC=${reason},${b.on ? 3 : 4}${b.on ? `,"${n}",${n.startsWith('+') ? 145 : 129}` : ''}`,
         30000,
@@ -204,27 +196,16 @@ export function createModemRoutes({
     },
     'GET /api/data': dataState,
     'POST /api/data': async (b: ApiBody) => {
-      if (typeof b.on !== 'boolean')
-        throw Object.assign(new Error('on must be a boolean'), { statusCode: 400 });
-      return { ...(await setData(b.on)), ...(await dataState()) };
+      const on = parseField(dataToggle(), b.on);
+      return { ...(await setData(on)), ...(await dataState()) };
     },
     'POST /api/apn': async (b: ApiBody) => {
-      const apn = clean(b.apn);
-      if (!/^[A-Za-z0-9._-]{1,100}$/.test(apn))
-        throw Object.assign(new Error('invalid APN'), { statusCode: 400 });
+      const apn = parseField(apnName(), clean(b.apn));
       await at(`AT+CGDCONT=1,"IP","${apn}"`);
       return { ok: 1 };
     },
     'POST /api/at': async (b: ApiBody) => {
-      const command = String(b.cmd || '')
-        .trim()
-        .replace(/[\r\n]/g, '');
-      if (
-        !/^AT(?:\+[A-Z0-9]+(?:\?|=[^;]{0,120})?)?$/i.test(command) ||
-        /^(?:AT(?:D|A|H|T|O|\+CMGS|\+CMSS))/i.test(command)
-      ) {
-        throw Object.assign(new Error('command is not permitted'), { statusCode: 400 });
-      }
+      const command = parseField(atCommand(), b.cmd);
       return { lines: await at(command, 30000) };
     },
   };
