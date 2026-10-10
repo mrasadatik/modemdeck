@@ -57,7 +57,8 @@ export class HttpServerAdapter {
         if (req.method === 'GET' && url.pathname === '/') {
           const headers: http.OutgoingHttpHeaders = {
             'content-type': 'text/html; charset=utf-8',
-            'content-security-policy': "default-src 'self'; connect-src 'self'",
+            'content-security-policy':
+              "default-src 'self'; img-src 'self' data: blob:; connect-src 'self'",
             'x-content-type-options': 'nosniff',
           };
           if (bootstrap)
@@ -66,28 +67,35 @@ export class HttpServerAdapter {
           res.writeHead(200, headers);
           return res.end(fs.readFileSync(path.join(options.rootDir, 'public', 'index.html')));
         }
-        if (req.method === 'GET' && url.pathname.startsWith('/assets/')) {
-          const publicRoot = path.resolve(options.rootDir, 'public');
-          const file = path.resolve(publicRoot, `.${url.pathname}`);
-          if (
-            !file.startsWith(`${publicRoot}${path.sep}`) ||
-            !fs.existsSync(file) ||
-            !fs.statSync(file).isFile()
-          )
-            return json(404, { error: 'not found' });
+        const staticFile =
+          req.method === 'GET' ? resolvePublicFile(options.rootDir, url.pathname) : null;
+        if (staticFile) {
           const contentTypes: Record<string, string> = {
             '.js': 'text/javascript; charset=utf-8',
             '.css': 'text/css; charset=utf-8',
             '.map': 'application/json; charset=utf-8',
+            '.png': 'image/png',
+            '.ico': 'image/x-icon',
+            '.svg': 'image/svg+xml',
+            '.webp': 'image/webp',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
           };
           res.writeHead(200, {
             'content-type':
-              contentTypes[path.extname(file).toLowerCase()] || 'application/octet-stream',
-            'cache-control': 'public, max-age=31536000, immutable',
+              contentTypes[path.extname(staticFile).toLowerCase()] || 'application/octet-stream',
+            'cache-control': url.pathname.startsWith('/assets/')
+              ? 'public, max-age=31536000, immutable'
+              : 'public, max-age=86400',
             'x-content-type-options': 'nosniff',
           });
-          return res.end(fs.readFileSync(file));
+          return res.end(fs.readFileSync(staticFile));
         }
+        if (
+          req.method === 'GET' &&
+          (url.pathname.startsWith('/assets/') || isRootIcon(url.pathname))
+        )
+          return json(404, { error: 'not found' });
         if (url.pathname === '/events') {
           options.sse.add(res);
           return;
@@ -188,4 +196,26 @@ export class HttpServerAdapter {
     item.count++;
     return item.count <= 120;
   }
+}
+
+/** Root-level public icons (favicons, logos). True for single-segment icon paths. */
+function isRootIcon(pathname: string): boolean {
+  return /^\/[A-Za-z0-9._-]+\.(png|ico|svg|webp|jpg|jpeg)$/.test(pathname);
+}
+
+/**
+ * Resolve a servable file under public/ for hashed bundles and root icons.
+ * Returns null for anything else so routing falls through to the API.
+ */
+function resolvePublicFile(rootDir: string, pathname: string): string | null {
+  if (!pathname.startsWith('/assets/') && !isRootIcon(pathname)) return null;
+  const publicRoot = path.resolve(rootDir, 'public');
+  const file = path.resolve(publicRoot, `.${pathname}`);
+  if (!file.startsWith(`${publicRoot}${path.sep}`)) return null;
+  try {
+    if (!fs.statSync(file).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return file;
 }
