@@ -4,8 +4,6 @@
   import Page from './Page.svelte';
   import { notify } from '../lib/store';
   import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
-  import { createAvatar } from '@dicebear/core';
-  import { avataaars } from '@dicebear/collection';
   let capabilities: Record<string, boolean> = {};
   let health: Health | undefined;
   let readiness: Readiness | undefined;
@@ -14,34 +12,12 @@
   let availablePorts: Array<{ path: string; label: string }> = [];
   let dialupProfiles: string[] = [];
   let profileName = '',
-    profileCountry = '',
-    profileImage = '',
-    profileGender = '',
-    profileSimId = '';
-  let generatedAvatar: string;
-  $: {
-    const seed = profileSimId || profileName || 'guest';
-    const genderOverride =
-      profileGender === 'male' ? 'male' : profileGender === 'female' ? 'female' : 'avatar';
-    generatedAvatar = createAvatar(avataaars, {
-      seed: `${seed}:${genderOverride}`,
-      size: 64,
-    }).toDataUri();
-  }
-  function pickProfileImage(event: Event): void {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => (profileImage = String(reader.result));
-    reader.readAsDataURL(file);
-  }
+    profileCountry = '';
   async function saveProfile(): Promise<void> {
     try {
       await api('auth/profile', {
         name: profileName,
         country: profileCountry,
-        gender: profileGender,
-        image: profileImage,
       });
       notify('Profile updated');
     } catch (error) {
@@ -93,9 +69,6 @@
     );
     profileName = String(auth.profile?.name ?? '');
     profileCountry = String(auth.profile?.country ?? '');
-    profileImage = String(auth.profile?.image ?? '');
-    profileGender = String(auth.profile?.gender ?? '');
-    profileSimId = String(auth.profile?.simId ?? '');
     port = String(configuration.port || '');
     baud = Number(configuration.baud || 115200);
     dialup = String(configuration.dialup || '');
@@ -158,20 +131,6 @@
       <h3>Profile defaults</h3>
       <p class="subtle">Your profile country & name; used to normalize every phone number.</p>
       <div class="grid">
-        <label class="span-4"
-          ><div class="label">Avatar</div>
-          <img
-            src={profileImage || generatedAvatar}
-            alt="Profile avatar"
-            style="max-width:72px;border-radius:12px;margin-bottom:8px"
-          />
-          <input
-            type="file"
-            accept="image/*"
-            on:change={pickProfileImage}
-            aria-label="Profile image"
-          /></label
-        >
         <label class="span-4"
           ><div class="label">Name</div>
           <input class="input" bind:value={profileName} aria-label="Profile name" /></label

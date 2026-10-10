@@ -6,11 +6,8 @@
   export let onUnlock = (): void => {};
   const title = configured ? 'Unlock profile' : 'Create your profile';
   let name = '',
-    gender = 'male',
     simLabel = '',
-    number = '',
     country = '',
-    image = '',
     password = '',
     confirm = '',
     recovery = '',
@@ -34,12 +31,9 @@
     try {
       const r = await api<{ recoveryPhrase?: string }>('auth/setup', {
         name,
-        gender,
         simLabel,
-        number,
         country,
         password,
-        image,
         recovery,
       });
       if (r.recoveryPhrase) {
@@ -55,13 +49,6 @@
     notify(`Recovery phrase saved. ${$phraseResult}`);
     phraseResult = '';
     onUnlock();
-  }
-  function pickImage(event: Event): void {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => (image = String(reader.result));
-    reader.readAsDataURL(file);
   }
   async function confirmPhrase(): Promise<void> {
     if (newPassword !== confirmNew) return notify('passwords do not match');
@@ -162,14 +149,8 @@
     {:else}
       <div class="label">Your name</div>
       <input class="input" bind:value={name} aria-label="Name" />
-      <div class="label">Gender</div>
-      <select class="input" bind:value={gender} aria-label="Gender">
-        <option value="male">male</option><option value="female">female</option>
-      </select>
       <div class="label">SIM label</div>
       <input class="input" bind:value={simLabel} aria-label="SIM label" />
-      <div class="label">SIM number (optional)</div>
-      <input class="input" bind:value={number} aria-label="SIM number" />
       <div class="label">Default country</div>
       <select class="input" bind:value={country} aria-label="Default country">
         <option value="">None — require full international format</option>
@@ -179,14 +160,6 @@
       </select>
       <div class="label">Trusted recovery number</div>
       <input class="input" bind:value={recovery} aria-label="Recovery number" />
-      <div class="label">Profile image (optional)</div>
-      <input type="file" accept="image/*" on:change={pickImage} aria-label="Profile image" />
-      {#if image}<img
-          class="avatar-preview"
-          src={image}
-          alt="Profile avatar preview"
-          style="max-width:72px;border-radius:12px;margin:8px 0"
-        />{/if}
       <div class="label">Credential</div>
       <input class="input" type="password" bind:value={password} aria-label="Credential" />
       <div class="label">Confirm credential</div>

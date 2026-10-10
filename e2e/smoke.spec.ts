@@ -10,7 +10,7 @@ test.beforeAll(() => {
 
 test('first-run setup creates the profile, then the app shell loads', async ({ page, request }) => {
   const setup = await request.post('/api/auth/setup', {
-    data: { name: 'Tester', gender: 'male', simLabel: 'lab', password: 'pass1234' },
+    data: { name: 'Tester', simLabel: 'lab', password: 'pass1234' },
   });
   expect([200, 409]).toContain(setup.status());
   await page.goto('/');

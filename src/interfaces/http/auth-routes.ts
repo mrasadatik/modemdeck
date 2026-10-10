@@ -84,17 +84,11 @@ export function createAuthRoutes({
       if (!okPassword(password))
         throw Object.assign(new Error('password must be 4–200 characters'), { statusCode: 400 });
       const name = typeof body.name === 'string' ? body.name.trim().slice(0, 120) : '';
-      const gender = body.gender === 'male' || body.gender === 'female' ? body.gender : null;
       const simLabel = typeof body.simLabel === 'string' ? body.simLabel.trim().slice(0, 120) : '';
-      const number = typeof body.number === 'string' ? body.number.trim().slice(0, 40) : '';
       const country =
         typeof body.country === 'string' ? body.country.slice(0, 2).toUpperCase() : '';
-      const image =
-        typeof body.image === 'string' && body.image.startsWith('data:image/')
-          ? body.image.slice(0, 2_000_000)
-          : '';
-      if (!name || !gender || !simLabel)
-        throw Object.assign(new Error('name, simLabel and gender are required'), {
+      if (!name || !simLabel)
+        throw Object.assign(new Error('name and simLabel are required'), {
           statusCode: 400,
         });
       const salt = randomBytes(16);
@@ -150,10 +144,7 @@ export function createAuthRoutes({
           dataKey,
           JSON.stringify({
             name,
-            gender,
             simLabel,
-            number,
-            image,
             country,
             simId: activeSimId() || '',
           }),
@@ -166,7 +157,7 @@ export function createAuthRoutes({
       return {
         ok: true,
         recoveryPhrase: phrase,
-        profile: { name, gender, simLabel, number, image },
+        profile: { name, simLabel },
       };
     },
     'POST /api/auth/login': async (body) => {
@@ -248,19 +239,10 @@ export function createAuthRoutes({
             typeof body.name === 'string' && body.name.trim()
               ? body.name.trim().slice(0, 120)
               : (current.name ?? ''),
-          gender:
-            body.gender === 'male' || body.gender === 'female'
-              ? body.gender
-              : (current.gender ?? ''),
           simLabel:
             typeof body.simLabel === 'string' && body.simLabel.trim()
               ? body.simLabel.trim().slice(0, 120)
               : (current.simLabel ?? ''),
-          number:
-            typeof body.number === 'string' && body.number.trim()
-              ? body.number.trim().slice(0, 40)
-              : (current.number ?? ''),
-          image: current.image ?? '',
           country:
             typeof body.country === 'string'
               ? body.country.length === 2
