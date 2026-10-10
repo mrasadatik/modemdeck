@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { Page, APIRequestContext } from '@playwright/test';
 import fs from 'node:fs';
 
 test.beforeAll(() => {
@@ -8,17 +9,28 @@ test.beforeAll(() => {
     if (/\.json$/.test(f)) fs.rmSync(`data/${f}`, { force: true });
 });
 
-test('first-run setup creates the profile, then the app shell loads', async ({ page, request }) => {
+const CREDENTIAL = { name: 'Tester', simLabel: 'lab', password: 'pass1234' };
+
+async function unlockPage(page: Page, request: APIRequestContext): Promise<void> {
   const setup = await request.post('/api/auth/setup', {
-    data: {
-      name: 'Tester',
-      simLabel: 'lab',
-      password: 'pass1234',
-      recovery: '+8801712345678',
-    },
+    data: { ...CREDENTIAL, recovery: '+8801712345678' },
   });
   expect([200, 409]).toContain(setup.status());
-  await page.goto('/');
+  const login = await request.post('/api/auth/login', {
+    data: { password: CREDENTIAL.password },
+  });
+  expect(login.ok()).toBeTruthy();
+  const { sessionId } = (await login.json()) as { sessionId?: string };
+  expect(sessionId).toMatch(/^[a-f0-9]{32}$/);
+  // Bootstrap the browser cookie from the request-context session.
+  await page.goto(`/?sid=${sessionId}`);
+}
+
+test.beforeEach(async ({ page, request }) => {
+  await unlockPage(page, request);
+});
+
+test('first-run setup creates the profile, then the app shell loads', async ({ page }) => {
   await expect(page).toHaveTitle(/ModemDeck/i);
   await expect(page.getByRole('button', { name: /Overview$/ })).toBeVisible();
   await expect(page.getByText('Recent messages')).toBeVisible();
@@ -31,7 +43,6 @@ test('sidebar fills the remaining viewport height with and without the warning',
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/');
 
   const sidebar = page.locator('.sidebar');
   const bounds = () =>
@@ -70,7 +81,6 @@ test('configuration suggests detected ports and dial-up profiles without restric
       },
     }),
   );
-  await page.goto('/');
   await page.getByRole('button', { name: /Capabilities$/ }).click();
   await expect(page.locator('#available-modem-ports option')).toHaveAttribute('value', 'COM7');
   await expect(page.locator('#dialup-profiles option')).toHaveCount(1);
