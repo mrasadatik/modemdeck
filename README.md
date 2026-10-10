@@ -1,18 +1,21 @@
 # ModemDeck
 
-Local-first web console for USB AT-command modems: SMS, USSD, call log, phonebook, network & dial-up data — private, self-hosted, localhost-only. Runs on any OS with a serial-capable port; CI verifies on Windows.
+Local-first web console for USB AT-command modems: SMS, USSD, call log, phonebook, network & dial-up data — private, self-hosted, localhost-only.
+
+Generic by design, not tied to any modem model, carrier, language, or OS: it talks to whatever modem answers standard AT commands (3GPP TS 27.007 / 27.005) on any serial port, with no model-specific drivers. Text encodings (GSM-7, UCS2, Latin-1, USSD data-coding variants) are auto-detected per message, so any language or script just works. There is no carrier-specific code — operator, registration and signal handling is identical on every network. OS integration (modem listing, dial-up control) sits behind a platform provider seam, and modem quirks are isolated in selectable profiles (`generic-standards` by default). Runs on any OS with a serial-capable port; CI verifies on Windows.
 
 ## Features
 
-- **SMS** — receive live (GSM-7 + Unicode/Bangla, multipart reassembly, locally archived), send, delete, modem sync/purge
+- **SMS** — receive live (GSM-7 / Unicode in any language, auto-detected, multipart reassembly, locally archived), send, delete, modem sync/purge
 - **USSD** — interactive sessions with cancel and reply
 - **Calls** — incoming-call log with caller ID
-- **Phonebook** — read/write contacts (SIM & modem storage, UCS2 names)
+- **Phonebook** — read/write contacts (SIM & modem storage, names decoded tolerantly)
 - **Network** — signal, operator, registration (CS/PS/EPS), IMEI, firmware, APN
 - **Dial-up data** — toggle the OS dial-up profile, connect/disconnect from the UI
 - **Call forwarding** — view/set forwarding rules
 - **Raw AT console** — guarded interactive console
 - **Diagnostics** — modem capability probes, compatibility evidence, health/readiness endpoints
+- **Modem profiles** — `generic-standards` behavior by default, selectable per device for quirks
 
 ## Quickstart
 
@@ -55,11 +58,13 @@ Restart-only settings: `http`, `authToken`, `dataPath`, `retentionDays`, `persis
 
 ## Compatibility
 
-| OS / CI platform                                                                                                                | Modem model | Firmware | SMS | USSD | Phonebook | Forwarding | Data dial-up | Call audio | Notes |
-| ------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | --- | ---- | --------- | ---------- | ------------ | ---------- | ----- |
-| _No physical modem tested on CI yet — populate from `npm run hardware:test -- COM3` output and `npm run compatibility:report`._ |             |          |     |      |           |            |              |            |       |
+Support is determined live per device, never by model allowlist: on connect the app probes what the modem actually answers (`AT+CMGF?`, `AT+CUSD?`, `AT+CPBS=?`, `AT+CCFC=?`, …) and every feature reports only that observed evidence. Unsupported commands fail with explicit errors instead of guesses. The table below is an evidence log — add rows from `npm run hardware:test -- COM3` output and `npm run compatibility:report`.
 
-Until a real device is added, we only confirm what the AT probe can observe; the UI reports only live evidence.
+| OS / CI platform    | Modem model                                     | Firmware              | SMS             | USSD    | Phonebook | Forwarding | Data dial-up | Call audio          | Notes                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ----------------------------------------------- | --------------------- | --------------- | ------- | --------- | ---------- | ------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows (localhost) | Qualcomm composite USB modem (CGMM reports `0`) | MDM9K-CIGO-U-7.3.9-4M | sync ✓ / send — | probe ✓ | probe ✓   | probe ✓    | —            | n/a (no audio path) | Observed 2026-10-10 via `compatibility:report` + live probes; message stores ME/MT/SM/SR all listable; phonebook stores SM/DC/FD/MC/ME/RC/EN reported; SIM held only orphaned multipart fragments (7 PDUs seen, 0 complete); send, USSD sessions, phonebook reads, forwarding interrogation and dial-up not yet exercised on this device |
+
+Until another device is observed, the UI reports only what the AT probe can see — nothing is assumed about any model, firmware, carrier, or language.
 
 ## Security & responsibility
 
@@ -111,7 +116,7 @@ Utilities: `npm run capture:trace -- COM3` records real serial traffic to NDJSON
 ## Troubleshooting
 
 - **No modem detected**: check the modem port in your OS device manager, close any competing serial client, and check the modem is not in use by the OS dial-up connection. The app retries discovery after a failed probe or unplug; reconnect the device and wait for the status to update. You can choose a detected port in Capabilities → Runtime configuration or pin `port` in `config.json`.
-- **Phonebook names look wrong**: most modems use UCS2; if yours differs, please open an issue with the output of `AT+CPBR=?`.
+- **Phonebook names look wrong**: names are decoded as UCS2 first and kept as plain text otherwise; if yours still differs, please open an issue with the output of `AT+CPBR=?`.
 - **Data toggle fails**: ensure the dial-up profile name matches exactly and the modem is attached to that profile (see README's dial-up tip above).
 
 ## License
