@@ -1,14 +1,23 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import type { Network } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify } from '../lib/store';
+  import { abortScope, isAbort, notify } from '../lib/store';
+  const aborts = abortScope();
+  onDestroy(() => aborts.abortAll());
   let value: Network = {};
+  let refreshing = false;
   export async function refresh(): Promise<void> {
+    if (refreshing) return;
+    refreshing = true;
     try {
-      value = await api<Network>('network');
+      value = await api<Network>('network', undefined, { signal: aborts.signal() });
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      refreshing = false;
     }
   }
   void refresh();
@@ -19,7 +28,8 @@
   title="Network health"
   description="Registration, signal, SIM, and modem identity."
   ><svelte:fragment slot="actions"
-    ><button class="button secondary" on:click={refresh}>↻ Refresh telemetry</button
+    ><button class="button secondary" disabled={refreshing} on:click={refresh}
+      >{refreshing ? '↻ Refreshing…' : '↻ Refresh telemetry'}</button
     ></svelte:fragment
   >
   <div class="grid">

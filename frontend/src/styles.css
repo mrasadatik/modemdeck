@@ -63,7 +63,10 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+  max-width: 100dvw;
   overflow: hidden;
+  overflow-x: clip;
 }
 #app {
   display: flex;
@@ -204,9 +207,10 @@ button {
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(18px);
   display: flex;
-  height: 76px;
+  min-height: 76px;
   justify-content: space-between;
-  padding: 0 clamp(20px, 4vw, 48px);
+  gap: 12px;
+  padding: 10px clamp(20px, 4vw, 48px);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -227,6 +231,19 @@ button {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+.row .button {
+  flex-shrink: 0;
+}
+/* Rows placed directly under a card always follow content: give them air. */
+.card > .row {
+  margin-top: 12px;
+}
+.card > .row:first-child {
+  margin-top: 0;
+}
+.stack > .row {
+  margin-top: 0;
 }
 .connection {
   border: 1px solid var(--line);
@@ -271,6 +288,13 @@ button {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(12, 1fr);
+}
+/* Grid/stack/card children must be allowed to shrink or wide content
+   (tables, inputs, long words) forces the page past 100dvw. */
+.grid > *,
+.stack > *,
+.card > * {
+  min-width: 0;
 }
 .card {
   background: linear-gradient(145deg, var(--surface), var(--mantle));
@@ -319,6 +343,7 @@ button {
   color: #11111b;
   font-weight: 700;
   padding: 10px 15px;
+  white-space: nowrap;
 }
 .button:hover {
   filter: brightness(1.08);
@@ -339,6 +364,42 @@ button {
 .button.small {
   font-size: 12px;
   padding: 7px 10px;
+}
+.button:disabled {
+  cursor: wait;
+  filter: saturate(0.4);
+  opacity: 0.55;
+  transform: none;
+}
+.button:disabled:hover {
+  filter: saturate(0.4);
+  transform: none;
+}
+/* Global in-flight indicator: driven by every api() request. */
+.progress {
+  background: transparent;
+  height: 3px;
+  left: 0;
+  overflow: hidden;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 60;
+}
+.progress i {
+  animation: progress-slide 1.1s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, var(--blue), transparent);
+  display: block;
+  height: 100%;
+  width: 40%;
+}
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
 }
 .stack {
   display: grid;
@@ -374,6 +435,15 @@ select:focus {
   font-weight: 600;
   margin: 16px 0 6px;
 }
+.label:first-child {
+  margin-top: 0;
+}
+.stack .label {
+  margin-top: 8px;
+}
+.stack > :first-child {
+  margin-top: 0;
+}
 .notice {
   background: var(--surface);
   border-radius: 10px;
@@ -398,6 +468,7 @@ select:focus {
 .message-text {
   line-height: 1.55;
   margin: 8px 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .signal {
@@ -445,6 +516,14 @@ table {
   margin-top: 18px;
   width: 100%;
 }
+/* Wide tables scroll inside their own block instead of pushing the page. */
+.table-scroll {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+.table-scroll table {
+  margin-top: 0;
+}
 th,
 td {
   border-bottom: 1px solid var(--line);
@@ -469,7 +548,9 @@ th {
     SFMono-Regular,
     Consolas,
     monospace;
+  max-height: 320px;
   min-height: 100px;
+  overflow: auto;
   padding: 13px;
   white-space: pre-wrap;
 }
@@ -488,6 +569,12 @@ th {
 }
 .toast.show {
   display: block;
+}
+.toast.ok {
+  border-color: color-mix(in srgb, var(--green) 55%, transparent);
+}
+.toast.error {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
 .skip-link {
   background: var(--blue);
@@ -591,8 +678,8 @@ textarea {
     display: none;
   }
   .topbar {
-    height: 68px;
-    padding: 0 20px;
+    min-height: 68px;
+    padding: 10px 20px;
   }
   .main {
     padding: 24px 18px;

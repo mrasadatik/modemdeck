@@ -80,6 +80,27 @@ export function exampleFor(country: string): CountryExample | null {
   }
 }
 
+export interface CountryOption {
+  value: string;
+  label: string;
+  hint: string;
+  preview?: string;
+}
+
+/** Full country list shaped for dropdowns: compact code preview, calling hint. */
+export function countryOptions(emptyLabel = 'Use profile default'): CountryOption[] {
+  const names = countryNames();
+  return [
+    { value: '', label: emptyLabel, hint: '' },
+    ...ALL_COUNTRIES.map((code) => ({
+      value: code,
+      label: `${names[code] ?? code} (${code})`,
+      hint: callingCodeFor(code) ?? '',
+      preview: code,
+    })),
+  ];
+}
+
 export interface ExampleMask {
   prefix: string;
   groups: number[];

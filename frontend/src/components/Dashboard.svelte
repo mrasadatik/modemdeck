@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api, formatTime } from '../lib/api';
   import type { DataState, Network, State } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify, status } from '../lib/store';
+  import { abortScope, isAbort, notify, status } from '../lib/store';
   export let state: State;
   export let open: (view: string) => void;
+  const aborts = abortScope();
+  onDestroy(() => aborts.abortAll());
   let data: DataState | undefined;
   let network: Network | undefined;
   onMount(() => {
@@ -13,9 +15,13 @@
   });
   async function refresh(): Promise<void> {
     try {
-      [data, network] = await Promise.all([api<DataState>('data'), api<Network>('network')]);
+      [data, network] = await Promise.all([
+        api<DataState>('data', undefined, { signal: aborts.signal() }),
+        api<Network>('network', undefined, { signal: aborts.signal() }),
+      ]);
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
     }
   }
 </script>

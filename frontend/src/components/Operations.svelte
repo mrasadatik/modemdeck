@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api, formatTime } from '../lib/api';
   import type { State } from '../lib/types';
   import Page from './Page.svelte';
   import PhoneNumberInput from './PhoneNumberInput.svelte';
-  import { defaultCountry, notify } from '../lib/store';
+  import SelectDropdown from './SelectDropdown.svelte';
+  import { abortScope, defaultCountry, isAbort, notify } from '../lib/store';
   export let mode: 'calls' | 'contacts' | 'forwarding';
   export let state: State;
   let store = 'SM',
@@ -19,24 +20,71 @@
     forwardCountry = '';
   let forwardE164: Record<number, string> = {};
   let forwardValid: Record<number, boolean> = {};
+  let acting = false;
+  let loading = false;
+  let actingRule: number | null = null;
+  let ruleCtl: AbortController | null = null;
+  const aborts = abortScope();
+  onDestroy(() => aborts.abortAll());
   let forwarding: Array<{ reason: number; active: boolean; number: string }> = [];
   const labels = ['Always', 'When busy', 'No reply', 'Unreachable'];
   async function load(): Promise<void> {
+    if (loading) return;
+    loading = true;
     try {
-      if (mode === 'contacts') contacts = await api<typeof contacts>(`phonebook?store=${store}`);
-      if (mode === 'forwarding') forwarding = await api<typeof forwarding>('forwarding');
+      if (mode === 'contacts')
+        contacts = await api<typeof contacts>(`phonebook?store=${store}`, undefined, {
+          signal: aborts.signal(),
+        });
+      if (mode === 'forwarding')
+        forwarding = await api<typeof forwarding>('forwarding', undefined, {
+          signal: aborts.signal(),
+        });
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      loading = false;
     }
   }
   async function action(path: string, body: Record<string, unknown>): Promise<void> {
+    if (acting || actingRule !== null) return;
+    acting = true;
     try {
-      await api(path, body);
-      notify('Done');
+      await api(path, body, { signal: aborts.signal() });
+      notify('Done', 'ok');
       await load();
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      acting = false;
     }
+  }
+  async function enableForwarding(reason: number): Promise<void> {
+    if (acting || actingRule !== null) return;
+    if (!forwardValid[reason]) return notify('Enter a valid forwarding number', 'error');
+    actingRule = reason;
+    const controller = new AbortController();
+    ruleCtl = controller;
+    try {
+      await api(
+        'forwarding',
+        { reason, on: true, number: forwardE164[reason] },
+        { signal: controller.signal },
+      );
+      notify('Done', 'ok');
+      await load();
+    } catch (error) {
+      if (isAbort(error)) notify('Cancelled');
+      else notify((error as Error).message, 'error');
+    } finally {
+      if (actingRule === reason) actingRule = null;
+      if (ruleCtl === controller) ruleCtl = null;
+    }
+  }
+  function cancelRule(): void {
+    ruleCtl?.abort();
   }
   onMount(() => {
     void load();
@@ -52,14 +100,16 @@
         This device exposes caller ID but has no audio path, so calls cannot be placed or answered
         here.
       </div>
-      {#if state.calls.length}<table>
-          <tbody
-            ><tr><th>Caller</th><th>Time</th></tr
-            >{#each state.calls as call (call.ts + call.number)}<tr
-                ><td>{call.number}</td><td>{formatTime(call.ts)}</td></tr
-              >{/each}</tbody
-          >
-        </table>{:else}<div class="empty">No incoming calls recorded.</div>{/if}
+      {#if state.calls.length}<div class="table-scroll">
+          <table>
+            <tbody
+              ><tr><th>Caller</th><th>Time</th></tr
+              >{#each state.calls as call (call.ts + call.number)}<tr
+                  ><td>{call.number}</td><td>{formatTime(call.ts)}</td></tr
+                >{/each}</tbody
+            >
+          </table>
+        </div>{:else}<div class="empty">No incoming calls recorded.</div>{/if}
     </div></Page
   >
 {:else if mode === 'contacts'}<Page
@@ -69,29 +119,40 @@
     ><div class="grid">
       <div class="card span-8">
         <div class="row">
-          <select class="input" aria-label="Phonebook store" bind:value={store}
-            ><option value="SM">SIM phonebook</option><option value="ME">Modem phonebook</option
-            ></select
-          ><button class="button secondary" on:click={load}>Reload</button>
+          <SelectDropdown
+            bind:value={store}
+            options={[
+              { value: 'SM', label: 'SIM phonebook' },
+              { value: 'ME', label: 'Modem phonebook' },
+            ]}
+            label="Phonebook store"
+          /><button
+            class="button secondary"
+            disabled={loading || actingRule !== null}
+            on:click={load}>{loading ? 'Loading…' : 'Reload'}</button
+          >
         </div>
-        {#if contacts.length}<table>
-            <tbody
-              ><tr><th>Slot</th><th>Name</th><th>Number</th><th></th></tr
-              >{#each contacts as contact (contact.index)}<tr
-                  ><td>{contact.index}</td><td>{contact.name}</td><td>{contact.number}</td><td
-                    ><button
-                      class="button danger small"
-                      on:click={() =>
-                        action('phonebook/delete', {
-                          store,
-                          index: contact.index,
-                          dest: contact.source === 'app' ? 'app' : 'sim',
-                        })}>Delete</button
-                    ></td
-                  ></tr
-                >{/each}</tbody
-            >
-          </table>{:else}<div class="empty">No contacts found.</div>{/if}
+        {#if contacts.length}<div class="table-scroll">
+            <table>
+              <tbody
+                ><tr><th>Slot</th><th>Name</th><th>Number</th><th></th></tr
+                >{#each contacts as contact (contact.index)}<tr
+                    ><td>{contact.index}</td><td>{contact.name}</td><td>{contact.number}</td><td
+                      ><button
+                        class="button danger small"
+                        disabled={acting || actingRule !== null}
+                        on:click={() =>
+                          action('phonebook/delete', {
+                            store,
+                            index: contact.index,
+                            dest: contact.source === 'app' ? 'app' : 'sim',
+                          })}>Delete</button
+                      ></td
+                    ></tr
+                  >{/each}</tbody
+              >
+            </table>
+          </div>{:else}<div class="empty">No contacts found.</div>{/if}
       </div>
       <div class="card span-4">
         <h3>Add contact</h3>
@@ -110,14 +171,19 @@
             bind:value={slot}
             placeholder="First free slot"
           />
-          <select class="input" bind:value={dest} aria-label="Save destination">
-            <option value="sim">Save to SIM</option>
-            <option value="app">Save inside app (encrypted)</option>
-          </select>
+          <SelectDropdown
+            bind:value={dest}
+            options={[
+              { value: 'sim', label: 'Save to SIM' },
+              { value: 'app', label: 'Save inside app (encrypted)' },
+            ]}
+            label="Save destination"
+          />
           <button
             class="button"
+            disabled={acting || actingRule !== null}
             on:click={() => {
-              if (!contactValid) return notify('Enter a valid contact number');
+              if (!contactValid) return notify('Enter a valid contact number', 'error');
               action('phonebook', {
                 store,
                 name,
@@ -128,7 +194,7 @@
               contactE164 = '';
               contactValid = false;
               contactKey += 1;
-            }}>Save contact</button
+            }}>{acting ? 'Saving…' : 'Save contact'}</button
           >
         </div>
       </div>
@@ -155,16 +221,13 @@
           <div class="row">
             <button
               class="button"
-              on:click={() => {
-                if (!forwardValid[rule.reason]) return notify('Enter a valid forwarding number');
-                action('forwarding', {
-                  reason: rule.reason,
-                  on: true,
-                  number: forwardE164[rule.reason],
-                });
-              }}>Enable</button
+              disabled={acting || (actingRule !== null && actingRule !== rule.reason)}
+              on:click={() =>
+                actingRule === rule.reason ? cancelRule() : enableForwarding(rule.reason)}
+              >{actingRule === rule.reason ? 'Cancel' : 'Enable'}</button
             ><button
               class="button secondary"
+              disabled={acting || actingRule !== null}
               on:click={() => action('forwarding', { reason: rule.reason, on: false, number: '' })}
               >Disable</button
             >

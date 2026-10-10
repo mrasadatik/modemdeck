@@ -14,7 +14,7 @@
     Settings02Icon,
   } from '@hugeicons/core-free-icons';
   import type { State } from './lib/types';
-  import { activeView, defaultCountry, notify, status, toast } from './lib/store';
+  import { activeView, busy, defaultCountry, notify, status, toast, toastKind } from './lib/store';
   import Sidebar from './components/Sidebar.svelte';
   import Topbar from './components/Topbar.svelte';
   import Dashboard from './components/Dashboard.svelte';
@@ -49,6 +49,8 @@
   let locked = true;
   let configured = false;
   let authChecked = false;
+  let refreshing = false;
+  let locking = false;
   async function checkAuth(): Promise<void> {
     try {
       const a = await api<{
@@ -80,19 +82,31 @@
       state = await api<State>('state');
       status.set(state.status);
     } catch (error) {
-      notify((error as Error).message);
+      notify((error as Error).message, 'error');
+    }
+  }
+  async function onRefresh(): Promise<void> {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      await refresh();
+    } finally {
+      refreshing = false;
     }
   }
   function open(view: string): void {
     activeView.set(view);
   }
   async function manualLock(): Promise<void> {
+    if (locking) return;
+    locking = true;
     try {
       await api('auth/logout', {});
     } catch {
       /* ignore */
     }
     locked = true;
+    locking = false;
   }
   onMount(() => {
     void checkAuth();
@@ -117,7 +131,7 @@
   <div
     class="warning-banner"
     role="alert"
-    style="min-height:100vh;align-items:center;justify-content:center"
+    style="min-height:100dvh;align-items:center;justify-content:center"
   >
     <p>
       <strong>No modem detected.</strong> Actively looking for a device — the credential screen will activate
@@ -135,6 +149,7 @@
   />
 {:else}
   <a class="skip-link" href="#main">Skip to content</a>
+  {#if $busy}<div class="progress" role="progressbar" aria-label="Working"><i></i></div>{/if}
   {#if showWarning}
     <div class="warning-banner" role="note">
       <p>
@@ -149,8 +164,8 @@
   <div class="app">
     <Sidebar {items} />
     <div class="content">
-      <Topbar {labels} {refresh} onLock={manualLock} />
-      <main class="main" id="main">
+      <Topbar {labels} refresh={onRefresh} {refreshing} onLock={manualLock} {locking} />
+      <main class="main" id="main" aria-busy={$busy}>
         {#if $activeView === 'overview'}<Dashboard {state} {open} />
         {:else if ['inbox', 'send', 'ussd'].includes($activeView)}<Messages
             {state}
@@ -163,5 +178,7 @@
       </main>
     </div>
   </div>
-  {#if $toast}<div class="toast show" role="status" aria-live="polite">{$toast}</div>{/if}
+  {#if $toast}<div class="toast show {$toastKind}" role="status" aria-live="polite">
+      {$toast}
+    </div>{/if}
 {/if}

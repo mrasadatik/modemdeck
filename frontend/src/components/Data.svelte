@@ -1,41 +1,74 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import type { DataState } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify } from '../lib/store';
+  import { abortScope, isAbort, notify } from '../lib/store';
+  const aborts = abortScope();
+  onDestroy(() => aborts.abortAll());
   let value: DataState = { configured: false, on: false },
     apn = '',
     command = '',
-    output = '';
+    output = '',
+    toggling = false,
+    toggleCtl: AbortController | null = null,
+    savingApn = false,
+    running = false;
   async function refresh(): Promise<void> {
     try {
-      value = await api<DataState>('data');
+      value = await api<DataState>('data', undefined, { signal: aborts.signal() });
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
     }
   }
   async function toggle(on: boolean): Promise<void> {
+    if (toggling) return;
+    toggling = true;
+    const controller = new AbortController();
+    toggleCtl = controller;
     try {
-      value = await api<DataState>('data', { on });
-      notify(on ? 'Connecting…' : 'Disconnected');
+      value = await api<DataState>('data', { on }, { signal: controller.signal });
+      notify(on ? 'Connecting…' : 'Disconnected', on ? 'info' : 'ok');
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) notify('Cancelled');
+      else notify((error as Error).message, 'error');
+    } finally {
+      if (toggleCtl === controller) toggleCtl = null;
+      toggling = false;
     }
   }
+  function cancelToggle(): void {
+    toggleCtl?.abort();
+  }
   async function saveApn(): Promise<void> {
+    if (savingApn) return;
+    savingApn = true;
     try {
-      await api('apn', { apn });
-      notify('APN saved');
+      await api('apn', { apn }, { signal: aborts.signal() });
+      notify('APN saved', 'ok');
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      savingApn = false;
     }
   }
   async function run(): Promise<void> {
+    if (running) return;
+    running = true;
+    output = 'Running…';
     try {
-      const result = await api<{ lines: string[] }>('at', { cmd: command });
+      const result = await api<{ lines: string[] }>(
+        'at',
+        { cmd: command },
+        { signal: aborts.signal() },
+      );
       output = result.lines.join('\n') || 'OK';
     } catch (error) {
-      output = `⚠ ${(error as Error).message}`;
+      output = isAbort(error) ? 'Cancelled.' : `⚠ ${(error as Error).message}`;
+    } finally {
+      running = false;
     }
   }
   void refresh();
@@ -55,9 +88,10 @@
           </div>
         </div>
         <div class="row">
-          <button class="button" on:click={() => toggle(true)}>Connect</button><button
-            class="button danger"
-            on:click={() => toggle(false)}>Disconnect</button
+          <button class="button" on:click={() => (toggling ? cancelToggle() : toggle(true))}
+            >{toggling ? 'Cancel' : 'Connect'}</button
+          ><button class="button danger" disabled={toggling} on:click={() => toggle(false)}
+            >Disconnect</button
           >
         </div>
       </div>
@@ -76,7 +110,8 @@
       <div class="row">
         <input class="input" aria-label="APN" bind:value={apn} placeholder="internet" /><button
           class="button secondary"
-          on:click={saveApn}>Save</button
+          disabled={savingApn}
+          on:click={saveApn}>{savingApn ? 'Saving…' : 'Save'}</button
         >
       </div>
     </div>
@@ -91,7 +126,9 @@
           aria-label="AT command"
           bind:value={command}
           placeholder="AT+CSQ"
-        /><button class="button secondary" on:click={run}>Run command</button>
+        /><button class="button secondary" disabled={running} on:click={run}
+          >{running ? 'Running…' : 'Run command'}</button
+        >
       </div>
       <pre class="console">{output || 'Output will appear here.'}</pre>
     </div>

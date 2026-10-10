@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { api } from './api';
-import { notify, toast, activeView, status } from './store';
+import { abortScope, busyCount, isAbort, notify, toast, activeView, status } from './store';
 
 describe('frontend API client teardown cases', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -62,5 +62,38 @@ describe('frontend store teardown cases', () => {
   it('defaults are sane and safe to render', () => {
     expect(get(activeView)).toBeTruthy();
     expect(get(status).connected).toBe(false);
+  });
+
+  it('recognizes cancellation errors', () => {
+    const abort = new DOMException('This operation was aborted', 'AbortError');
+    expect(isAbort(abort)).toBe(true);
+    expect(isAbort(new Error('wrong password'))).toBe(false);
+    expect(isAbort(null)).toBe(false);
+  });
+
+  it('abort scopes cancel tracked signals together', () => {
+    const scope = abortScope();
+    const first = scope.signal();
+    const second = scope.signal();
+    expect(first.aborted).toBe(false);
+    scope.abortAll();
+    expect(first.aborted).toBe(true);
+    expect(second.aborted).toBe(true);
+  });
+
+  it('api requests clear the busy counter even when aborted', async () => {
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          controller.signal.addEventListener('abort', () =>
+            reject(new DOMException('This operation was aborted', 'AbortError')),
+          );
+        }),
+    );
+    const pending = api('state', undefined, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(get(busyCount)).toBe(0);
   });
 });

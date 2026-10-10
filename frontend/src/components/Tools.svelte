@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api, formatTime } from '../lib/api';
   import type { Compatibility, DataState, Health, Readiness } from '../lib/types';
   import Page from './Page.svelte';
-  import { notify } from '../lib/store';
-  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
+  import { abortScope, isAbort, notify } from '../lib/store';
+  import SelectDropdown from './SelectDropdown.svelte';
+  import { countryOptions } from '../lib/phone-numbers-lib.js';
+  const aborts = abortScope();
+  onDestroy(() => aborts.abortAll());
   let capabilities: Record<string, boolean> = {};
   let health: Health | undefined;
   let readiness: Readiness | undefined;
@@ -13,15 +17,27 @@
   let dialupProfiles: string[] = [];
   let profileName = '',
     profileCountry = '';
+  let savingProfile = false;
+  let savingConfig = false;
+  let rechecking = false;
   async function saveProfile(): Promise<void> {
+    if (savingProfile) return;
+    savingProfile = true;
     try {
-      await api('auth/profile', {
-        name: profileName,
-        country: profileCountry,
-      });
-      notify('Profile updated');
+      await api(
+        'auth/profile',
+        {
+          name: profileName,
+          country: profileCountry,
+        },
+        { signal: aborts.signal() },
+      );
+      notify('Profile updated', 'ok');
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      savingProfile = false;
     }
   }
   let port = '',
@@ -34,23 +50,26 @@
     captureRaw = false;
   async function refresh(): Promise<void> {
     try {
+      const signal = aborts.signal();
       [capabilities, readiness, health, compatibility] = await Promise.all([
-        api<Record<string, boolean>>('capabilities'),
-        api<Readiness>('ready'),
-        api<Health>('health'),
-        api<Compatibility>('compatibility'),
+        api<Record<string, boolean>>('capabilities', undefined, { signal }),
+        api<Readiness>('ready', undefined, { signal }),
+        api<Health>('health', undefined, { signal }),
+        api<Compatibility>('compatibility', undefined, { signal }),
       ]);
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
     }
   }
   async function loadOptions(): Promise<void> {
+    const signal = aborts.signal();
     const [ports, data] = await Promise.allSettled([
-      api<typeof availablePorts>('ports'),
-      api<DataState>('data'),
+      api<typeof availablePorts>('ports', undefined, { signal }),
+      api<DataState>('data', undefined, { signal }),
     ]);
     if (ports.status === 'fulfilled') availablePorts = ports.value;
-    else notify((ports.reason as Error).message);
+    else notify((ports.reason as Error).message, 'error');
     if (data.status === 'fulfilled')
       dialupProfiles = [
         ...new Set(
@@ -63,39 +82,64 @@
       ];
   }
   async function loadConfig(): Promise<void> {
-    configuration = await api<Record<string, unknown>>('config');
-    const auth = await api<{ profile?: Record<string, unknown> }>('auth/status').catch(
-      () => ({}) as { profile?: Record<string, unknown> },
-    );
-    profileName = String(auth.profile?.name ?? '');
-    profileCountry = String(auth.profile?.country ?? '');
-    port = String(configuration.port || '');
-    baud = Number(configuration.baud || 115200);
-    dialup = String(configuration.dialup || '');
-    profile = String(configuration.profile || 'generic-standards');
-    capturePath = String(configuration.capturePath || '');
-    lockMinutes = Number(configuration.lockMinutes) || 0;
-    sessionMaxMinutes = Number(configuration.sessionMaxMinutes) || 480;
-    captureRaw = configuration.captureRaw === true;
+    try {
+      const signal = aborts.signal();
+      configuration = await api<Record<string, unknown>>('config', undefined, { signal });
+      const auth = await api<{ profile?: Record<string, unknown> }>('auth/status', undefined, {
+        signal,
+      }).catch(() => ({}) as { profile?: Record<string, unknown> });
+      profileName = String(auth.profile?.name ?? '');
+      profileCountry = String(auth.profile?.country ?? '');
+      port = String(configuration.port || '');
+      baud = Number(configuration.baud || 115200);
+      dialup = String(configuration.dialup || '');
+      profile = String(configuration.profile || 'generic-standards');
+      capturePath = String(configuration.capturePath || '');
+      lockMinutes = Number(configuration.lockMinutes) || 0;
+      sessionMaxMinutes = Number(configuration.sessionMaxMinutes) || 480;
+      captureRaw = configuration.captureRaw === true;
+    } catch (error) {
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    }
   }
   async function save(): Promise<void> {
+    if (savingConfig) return;
+    savingConfig = true;
     try {
-      const result = await api<{ hotReloaded: boolean }>('config', {
-        port,
-        baud,
-        dialup,
-        profile,
-        captureRaw,
-        capturePath,
-        lockMinutes,
-        sessionMaxMinutes,
-      });
+      const result = await api<{ hotReloaded: boolean }>(
+        'config',
+        {
+          port,
+          baud,
+          dialup,
+          profile,
+          captureRaw,
+          capturePath,
+          lockMinutes,
+          sessionMaxMinutes,
+        },
+        { signal: aborts.signal() },
+      );
       notify(
         result.hotReloaded ? 'Configuration saved and modem reconnected' : 'Configuration saved',
+        'ok',
       );
       await loadConfig();
     } catch (error) {
-      notify((error as Error).message);
+      if (isAbort(error)) return;
+      notify((error as Error).message, 'error');
+    } finally {
+      savingConfig = false;
+    }
+  }
+  async function recheck(): Promise<void> {
+    if (rechecking) return;
+    rechecking = true;
+    try {
+      await Promise.all([refresh(), loadOptions()]);
+    } finally {
+      rechecking = false;
     }
   }
   void Promise.all([refresh(), loadConfig(), loadOptions()]);
@@ -106,8 +150,8 @@
   title="Capabilities"
   description="What this modem has actually reported during live probing."
   ><svelte:fragment slot="actions"
-    ><button class="button secondary" on:click={() => void Promise.all([refresh(), loadOptions()])}
-      >↻ Recheck</button
+    ><button class="button secondary" disabled={rechecking} on:click={recheck}
+      >{rechecking ? '↻ Rechecking…' : '↻ Recheck'}</button
     ></svelte:fragment
   >
   <div class="grid">
@@ -137,15 +181,19 @@
         >
         <label class="span-4"
           ><div class="label">Default country</div>
-          <select class="input" bind:value={profileCountry} aria-label="Default country">
-            <option value="">None — require full international format</option>
-            {#each ALL_COUNTRIES as code (code)}
-              <option value={code}>{countryNames()[code] ?? code} ({code})</option>
-            {/each}
-          </select></label
+          <SelectDropdown
+            bind:value={profileCountry}
+            options={countryOptions('None — require full international format')}
+            label="Default country"
+            searchPlaceholder="Search country…"
+          /></label
         >
       </div>
-      <div class="row end"><button class="button" on:click={saveProfile}>Save profile</button></div>
+      <div class="row end">
+        <button class="button" disabled={savingProfile} on:click={saveProfile}
+          >{savingProfile ? 'Saving…' : 'Save profile'}</button
+        >
+      </div>
     </div>
     <div class="card span-12">
       <h3>Runtime configuration</h3>
@@ -229,7 +277,11 @@
       <label class="row"
         ><input type="checkbox" bind:checked={captureRaw} /> Capture raw modem trace</label
       >
-      <div class="row end"><button class="button" on:click={save}>Save and apply</button></div>
+      <div class="row end">
+        <button class="button" disabled={savingConfig} on:click={save}
+          >{savingConfig ? 'Saving…' : 'Save and apply'}</button
+        >
+      </div>
     </div>
     {#each Object.entries(capabilities) as [name, supported] (name)}<div class="card span-4">
         <div class="row between">
