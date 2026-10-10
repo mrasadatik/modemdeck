@@ -2,27 +2,19 @@
   import { api, formatTime } from '../lib/api';
   import type { State } from '../lib/types';
   import Page from './Page.svelte';
+  import PhoneNumberInput from './PhoneNumberInput.svelte';
   import { defaultCountry, notify } from '../lib/store';
-  import { parsePhoneNumberFromString } from 'libphonenumber-js';
-  import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   export let state: State;
   export let mode: 'inbox' | 'send' | 'ussd';
-  let to = '',
+  let toE164 = '',
+    toValid = false,
     smsCountry = '',
+    formKey = 0,
     text = '',
     code = '',
     reply = '',
     result = 'No active session.';
   $: smsCountry = smsCountry || $defaultCountry;
-  function normalizeNumber(value: string, country: string): string {
-    if (!value.trim()) return value;
-    try {
-      const p = parsePhoneNumberFromString(value.trim(), (country || undefined) as never);
-      return p?.isValid() ? p.number : value;
-    } catch {
-      return value;
-    }
-  }
   $: recentNumbers = [
     ...new Set([
       ...state.sent.map((message) => message.to),
@@ -42,14 +34,17 @@
     }
   }
   async function send(): Promise<void> {
+    if (!toValid) return notify('Enter a valid recipient number');
     if (!confirm('Send this SMS? Your carrier may charge for it.')) return;
     try {
       const sent = await api<{ parts: number }>('sms', {
-        to: normalizeNumber(to, smsCountry),
+        to: toE164,
         text,
       });
       notify(`Sent · ${sent.parts} part(s)`);
-      to = '';
+      toE164 = '';
+      toValid = false;
+      formKey += 1;
       text = '';
     } catch (error) {
       notify((error as Error).message);
@@ -98,19 +93,14 @@
     ><div class="grid">
       <div class="card span-8">
         <div class="label">Recipient</div>
-        <select class="input" bind:value={smsCountry} aria-label="Country of recipient">
-          <option value="">Use profile default</option>
-          {#each ALL_COUNTRIES as code (code)}
-            <option value={code}>{countryNames()[code] ?? code} ({code})</option>
-          {/each}
-        </select>
-        <input
-          class="input"
-          aria-label="Destination number"
-          bind:value={to}
-          list="recent-numbers"
-          placeholder="+880 1XXXXXXXXX"
-        />
+        {#key formKey}<PhoneNumberInput
+            bind:country={smsCountry}
+            defaultCountry={$defaultCountry}
+            bind:e164={toE164}
+            bind:valid={toValid}
+            label="Destination number"
+            datalistId="recent-numbers"
+          />{/key}
         <datalist id="recent-numbers">
           {#each recentNumbers as number (number)}<option value={number}></option>{/each}
         </datalist>

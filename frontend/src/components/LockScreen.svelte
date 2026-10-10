@@ -1,16 +1,20 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { notify } from '../lib/store';
+  import PhoneNumberInput from './PhoneNumberInput.svelte';
   import { ALL_COUNTRIES, countryNames } from '../lib/phone-numbers-lib.js';
   export let configured = false;
   export let onUnlock = (): void => {};
   const title = configured ? 'Unlock profile' : 'Create your profile';
+  $: recoveryCountry = recoveryCountry || country;
   let name = '',
     simLabel = '',
     country = '',
     password = '',
     confirm = '',
-    recovery = '',
+    recoveryE164 = '',
+    recoveryValid = true,
+    recoveryCountry = '',
     forgotMode = false,
     otpSent = false,
     otp = '',
@@ -28,13 +32,14 @@
   }
   async function create(): Promise<void> {
     if (password !== confirm) return notify('passwords do not match');
+    if (!recoveryValid) return notify('Enter a valid recovery number or leave it empty');
     try {
       const r = await api<{ recoveryPhrase?: string }>('auth/setup', {
         name,
         simLabel,
         country,
         password,
-        recovery,
+        recovery: recoveryE164,
       });
       if (r.recoveryPhrase) {
         phraseResult = r.recoveryPhrase;
@@ -158,8 +163,15 @@
           <option value={code}>{countryNames()[code] ?? code} ({code})</option>
         {/each}
       </select>
-      <div class="label">Trusted recovery number</div>
-      <input class="input" bind:value={recovery} aria-label="Recovery number" />
+      <div class="label">Trusted recovery number (optional)</div>
+      <PhoneNumberInput
+        bind:country={recoveryCountry}
+        defaultCountry={country}
+        bind:e164={recoveryE164}
+        bind:valid={recoveryValid}
+        label="Recovery number"
+        allowEmpty={true}
+      />
       <div class="label">Credential</div>
       <input class="input" type="password" bind:value={password} aria-label="Credential" />
       <div class="label">Confirm credential</div>

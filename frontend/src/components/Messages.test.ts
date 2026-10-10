@@ -27,7 +27,7 @@ describe('Messages workflows', () => {
       props: { state, mode: 'send' },
     });
 
-    await fireEvent.input(getByPlaceholderText('+880 1XXXXXXXXX'), {
+    await fireEvent.input(getByPlaceholderText('01812-345678'), {
       target: { value: '+8801712345678' },
     });
     await fireEvent.input(getByPlaceholderText('Write your message…'), {
