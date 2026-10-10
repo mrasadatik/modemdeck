@@ -126,10 +126,9 @@ function parseConcatHeader(userData: Buffer): {
 } {
   let ref = 0,
     seq = 1,
-    total = 1,
-    headerBytes = 0;
+    total = 1;
   const length = userData[0];
-  headerBytes = length + 1;
+  const headerBytes = length + 1;
   for (let i = 1; i < length && i + 2 <= (userData[0] ?? 0);) {
     const id = userData[i],
       size = userData[i + 1];

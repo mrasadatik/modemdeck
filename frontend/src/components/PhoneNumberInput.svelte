@@ -40,8 +40,11 @@
   $: effectiveCountry = country || defaultCountry || '';
   $: callingCode = callingCodeFor(effectiveCountry) ?? '';
   $: placeholder = exampleFor(effectiveCountry || FALLBACK_COUNTRY)?.national ?? '';
-  $: if (clearToken !== seenClearToken) {
-    seenClearToken = clearToken;
+  $: if (clearToken !== seenClearToken) clearInputs(clearToken);
+  function clearInputs(token: number): void {
+    // Change-detected reset: the written token is read back on the next
+    // evaluation, so repeated tokens never clear twice.
+    seenClearToken = token;
     national = '';
     e164 = '';
     valid = allowEmpty;

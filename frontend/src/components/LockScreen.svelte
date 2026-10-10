@@ -21,8 +21,6 @@
   const title = configured ? 'Unlock profile' : 'Create your profile';
   $: recoveryCountry = recoveryCountry || country;
   $: verified = verifiedTo !== '' && verifiedTo === recoveryE164;
-  // A changed number voids the previous proof.
-  $: if (verifiedTo && verifiedTo !== recoveryE164) verifiedTo = '';
   let setupErrors: Record<string, string> = {};
   let setupShown = false;
   let otpError = '';
@@ -67,6 +65,7 @@
     recoveryCountry = '',
     setupOtp = '',
     otpTo = '',
+    // eslint-disable-next-line no-useless-assignment -- consumed by the verified derivation above
     verifiedTo = '',
     forgotMode = false,
     otpSent = false,
